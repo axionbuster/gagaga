@@ -16,7 +16,7 @@ mod domainprim {
 
     /// Attempt to convert a SystemTime (returned on file statistics calls)
     /// to the DateTime type. How inconvenient is this?
-    pub fn systime2datetime(t: std::time::SystemTime) -> Option<DateTime> {
+    fn systime2datetime(t: std::time::SystemTime) -> Option<DateTime> {
         t.duration_since(std::time::UNIX_EPOCH)
             .ok()
             .map(|d| chrono::Utc.timestamp_opt(d.as_secs() as i64, d.subsec_nanos()))
@@ -276,27 +276,6 @@ not user-controllable, or maybe not?"#,
         matches!(ext, "jpeg" | "jpg" | "JPEG" | "JPG")
             || matches!(ext.to_ascii_lowercase().as_str(), "jpeg" | "jpg")
     }
-
-    /// In-memory representation of an image file.
-    pub struct MemImg(image::DynamicImage);
-
-    /// Attempt to perform the compound action of accepting a
-    /// resolved and trusted path,
-    /// opening it, and reading it into memory,
-    /// and then, lastly, determining its thumbnail.
-    ///
-    /// Obviously, it's due to a refactoring. It's because I'm
-    /// going to add a caching layer and more formats.
-    pub fn genthumb<const TW: u32, const TH: u32>(path: &ResolvedPath) -> anyhow::Result<MemImg> {
-        // Use image crate, open and read image.
-        let dynimg: image::DynamicImage = image::io::Reader::open(path.as_ref())?.decode()?;
-
-        // Generate thumbnail
-        let dynimg = dynimg.thumbnail(TW, TH);
-
-        // Cool!
-        Ok(MemImg(dynimg))
-    }
 }
 
 /// Some HTTP-related errors.
@@ -407,10 +386,10 @@ async fn serve_user_path_core(
         &userpathreal,
         // don't go outside of the root directory (server's control)
         &rootdir,
-        // collect regular files here
-        &mut files,
         // and collect directories here
         &mut directories,
+        // collect regular files here
+        &mut files,
         // lastly, set this flag if the limit is reached
         &mut limit_reached,
     )

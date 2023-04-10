@@ -2,7 +2,17 @@
 <body>
 <h1>My first Sailfish page</h1>
 <p><%= files.len() %> files found</p>
+<ul>
+<% for file in files.iter() { %>
+<li><%= file.display_name() %></li>
+<% } %>
+</ul>
 <p><%= directories.len() %> directories found</p>
+<ul>
+<% for directory in directories.iter() { %>
+<li><%= directory.display_name() %></li>
+<% } %>
+</ul>
 <p>Limit reached? <%= limit_reached %></p>
 </body>
 </html>
