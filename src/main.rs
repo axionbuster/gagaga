@@ -8,6 +8,7 @@ mod domainprim {
 
     use anyhow::Context;
     use chrono::TimeZone;
+    use serde::Serialize;
 
     /// UTC DateTime
     type DateTime = chrono::DateTime<chrono::Utc>;
@@ -168,6 +169,26 @@ not user-controllable, or maybe not?"#,
             } else {
                 "".to_string()
             }
+        }
+    }
+
+    // We need some custom serialization for DomainFile
+    // because client JavaScript expects a specific format.
+    impl Serialize for DomainFile {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            use serde::ser::SerializeMap;
+            let mut state = serializer.serialize_map(None)?;
+            state.serialize_entry("display_name", &self.display_name())?;
+            state.serialize_entry(
+                "url",
+                &self.display_url(&admitpathbuf(std::env::current_dir().unwrap())),
+            )?;
+            state.serialize_entry("size_bytes", &self.display_size_en_us())?;
+            state.serialize_entry("last_modified", &self.display_last_modified_en_us())?;
+            state.end()
         }
     }
 
