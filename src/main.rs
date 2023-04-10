@@ -54,31 +54,6 @@ mod domainprim {
         ResolvedPath(path)
     }
 
-    /// Primitively (1) attempt to decide whether a given reference to Path points to a
-    /// directory or a file. I'm going to refactor this and then make an enum or
-    /// something.
-    ///
-    /// (1): Using callbacks is usually a bad idea, but I'm going to do it anyway,
-    /// that's what I do to minimize noise when I'm carving out a new idea.
-    pub fn filediscriminate<F1, F2, F3>(
-        metadata: &std::fs::Metadata,
-        when_dir: F1,
-        when_reg: F2,
-        when_neither: F3,
-    ) where
-        F1: FnOnce(),
-        F2: FnOnce(),
-        F3: FnOnce(),
-    {
-        if metadata.is_dir() {
-            when_dir();
-        } else if metadata.is_file() {
-            when_reg();
-        } else {
-            when_neither();
-        }
-    }
-
     /// A regular file or directory.
     pub struct DomainFile {
         /// The path to the file or directory.
@@ -123,13 +98,7 @@ not user-controllable, or maybe not?"#,
                     )
                 })
                 .unwrap();
-
-            // Convert the path to a string
-            let path = path.to_str();
-            if path.is_none() {
-                return None;
-            }
-            let path = path.unwrap();
+            let path = path.to_str()?;
 
             // If the path is empty, then we're at the root directory.
             // Return the root URL.
@@ -234,31 +203,23 @@ not user-controllable, or maybe not?"#,
                 continue;
             }
             let path: ResolvedPath = path?;
+            let domainfile = DomainFile {
+                path,
+                last_modified: metadata.modified().ok().and_then(systime2datetime),
+                size_bytes: metadata.len(),
+            };
 
             // Decide whether the entry is a directory or a file
-            filediscriminate(
-                &metadata,
-                || {
-                    // It's a directory!
-                    dirs.push(DomainFile {
-                        path: path.clone(),
-                        last_modified: metadata.modified().ok().and_then(systime2datetime),
-                        size_bytes: metadata.len(),
-                    });
-                },
-                || {
-                    // Now, it's a file!
-                    files.push(DomainFile {
-                        path: path.clone(),
-                        last_modified: metadata.modified().ok().and_then(systime2datetime),
-                        size_bytes: metadata.len(),
-                    });
-                },
-                || {
-                    // Do nothing if it's neither a file nor a directory.
-                    // Stuff like devices.
-                },
-            );
+            if metadata.is_dir() {
+                // It's a directory!
+                dirs.push(domainfile);
+            } else if metadata.is_file() {
+                // Now, it's a file!
+                files.push(domainfile);
+            } else {
+                // Do nothing if it's neither a file nor a directory.
+                // Stuff like devices.
+            }
         }
 
         // If the limit is reached, then set the flag
@@ -354,9 +315,7 @@ async fn serve_user_path_core(
     userpath: axum::extract::Path<String>,
 ) -> Result<Html<String>, MyError> {
     // Domain-specific primitives
-    use crate::domainprim::{
-        admitpathbuf, dirlist, filediscriminate, pathresolve, DomainFile, ResolvedPath,
-    };
+    use crate::domainprim::{admitpathbuf, dirlist, pathresolve, DomainFile, ResolvedPath};
 
     // What's up, user. How are you doing?
     let userpath: String = userpath.0;
@@ -376,18 +335,11 @@ async fn serve_user_path_core(
     let mut reg = false;
     let mut dir = false;
     let filemetadata = userpathreal.as_ref().metadata()?;
-    filediscriminate(
-        &filemetadata,
-        || {
-            dir = true;
-        },
-        || {
-            reg = true;
-        },
-        || {
-            // Do nothing if it's neither a file nor a directory.
-        },
-    );
+    if filemetadata.is_dir() {
+        dir = true;
+    } else if filemetadata.is_file() {
+        reg = true;
+    }
 
     // If it's a regular file, then download it.
     if reg {
