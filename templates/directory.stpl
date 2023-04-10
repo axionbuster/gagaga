@@ -1,0 +1,8 @@
+<html>
+<body>
+<h1>My first Sailfish page</h1>
+<p><%= files.len() %> files found</p>
+<p><%= directories.len() %> directories found</p>
+<p>Limit reached? <%= limit_reached %></p>
+</body>
+</html>
