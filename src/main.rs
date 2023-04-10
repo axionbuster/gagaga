@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use axum::{response::Html, routing::get, Router};
+use http::StatusCode;
 
 mod domainprim {
     //! Define domain-specific types and processes
@@ -399,8 +400,7 @@ async fn serve_user_path_core(
     Ok(Html(html))
 }
 
-async fn serve_user_path(userpath: axum::extract::Path<String>) -> Html<String> {
-    // serve_user_path_core(userpath).await.unwrap()
+async fn serve_user_path(userpath: axum::extract::Path<String>) -> (StatusCode, Html<String>) {
     let reply = serve_user_path_core(userpath).await;
 
     // Log it
@@ -410,22 +410,22 @@ async fn serve_user_path(userpath: axum::extract::Path<String>) -> Html<String> 
 
     // If there's a not found error, then return a 404.
     if let Err(MyError::NotFound) = reply {
-        return Html(
+        return (StatusCode::NOT_FOUND, Html(
             "<html><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1></body></html>"
                 .to_string(),
-        );
+        ));
     }
 
     // If there's any other error, then return a 500.
     if reply.is_err() {
-        return Html(
+        return (StatusCode::INTERNAL_SERVER_ERROR, Html(
             "<html><head><title>500 Internal Server Error</title></head><body><h1>500 Internal Server Error</h1></body></html>"
                 .to_string(),
-        );
+        ));
     }
 
     // If there's no error, then return the HTML.
-    reply.unwrap()
+    (StatusCode::OK, reply.unwrap())
 }
 
 #[tokio::main]
