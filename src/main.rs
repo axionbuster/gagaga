@@ -35,16 +35,45 @@ mod domainprim {
         }
     }
 
+    /// Errors in resolving a path
+    #[derive(Debug, thiserror::Error)]
+    pub enum ResolvePathError {
+        #[error("Path {path:?} is not a subpath of parent {parent:?}")]
+        NotSubpath { path: PathBuf, parent: PathBuf },
+
+        #[error("Any I/O error")]
+        IoError(
+            #[from]
+            #[source]
+            std::io::Error,
+        ),
+
+        #[error("Any other error")]
+        OtherError(
+            #[from]
+            #[source]
+            anyhow::Error,
+        ),
+    }
+
     /// Attempt to resolve a path asynchronously and admit it if
     /// it is a subpath of the right path, an absolute, similarly
     /// resolved path.
-    pub async fn pathresolve(path: &Path, parent: &ResolvedPath) -> anyhow::Result<ResolvedPath> {
+    pub async fn pathresolve(
+        path: &Path,
+        parent: &ResolvedPath,
+    ) -> Result<ResolvedPath, ResolvePathError> {
         // Ask Tokio to resolve the path asynchronously
-        let path = tokio::fs::canonicalize(path).await?;
+        let path: Result<PathBuf, std::io::Error> = tokio::fs::canonicalize(path).await;
+        let path: PathBuf = path?;
 
         // Decide whether the resolved path is a subpath of the parent
         if !path.starts_with(parent.as_ref()) {
-            anyhow::bail!("Path {path:?} is not a subpath of parent {parent:?}");
+            // anyhow::bail!("Path {path:?} is not a subpath of parent {parent:?}");
+            return Err(ResolvePathError::NotSubpath {
+                path,
+                parent: parent.as_ref().to_path_buf(),
+            });
         }
 
         Ok(ResolvedPath(path))
@@ -330,7 +359,18 @@ async fn serve_user_path_core(
     // Resolve the path (convert user's path to server's absolute path, as well as
     // following symlinks and all that). Note: according to the contract of
     // ResolvedPath, it's guaranteed to be absolute and within the root directory.
-    let userpathreal: ResolvedPath = pathresolve(&userpath, &rootdir).await?;
+    let userpathreal = pathresolve(&userpath, &rootdir).await;
+    if let Err(e) = &userpathreal {
+        use crate::domainprim::ResolvePathError;
+        match e {
+            // If the stripping didn't work, then it's a 404.
+            // If the file also wasn't found, then it's a 404.
+            ResolvePathError::NotSubpath { path: _, parent: _ } => return Err(MyError::NotFound),
+            ResolvePathError::IoError(_) => return Err(MyError::NotFound),
+            e => return Err(anyhow::anyhow!("unhandled error: {e}").into()),
+        }
+    }
+    let userpathreal: ResolvedPath = userpathreal.unwrap();
 
     // Check if the path is a directory or a file, setting the flags.
     let mut reg = false;
@@ -403,11 +443,6 @@ async fn serve_user_path_core(
 async fn serve_user_path(userpath: axum::extract::Path<String>) -> (StatusCode, Html<String>) {
     let reply = serve_user_path_core(userpath).await;
 
-    // Log it
-    if reply.is_err() {
-        eprintln!("Error: {:?}", reply);
-    }
-
     // If there's a not found error, then return a 404.
     if let Err(MyError::NotFound) = reply {
         return (StatusCode::NOT_FOUND, Html(
@@ -418,6 +453,9 @@ async fn serve_user_path(userpath: axum::extract::Path<String>) -> (StatusCode, 
 
     // If there's any other error, then return a 500.
     if reply.is_err() {
+        // Log it
+        tracing::error!("error: {:#?}", reply);
+
         return (StatusCode::INTERNAL_SERVER_ERROR, Html(
             "<html><head><title>500 Internal Server Error</title></head><body><h1>500 Internal Server Error</h1></body></html>"
                 .to_string(),
@@ -430,6 +468,9 @@ async fn serve_user_path(userpath: axum::extract::Path<String>) -> (StatusCode, 
 
 #[tokio::main]
 async fn main() {
+    // Set up logging
+    tracing_subscriber::fmt::init();
+
     // Build app
     let app = Router::new()
         .route(
