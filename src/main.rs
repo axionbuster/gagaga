@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use axum::{response::Html, routing::get, Router};
+use axum::{routing::get, Json, Router};
+use domainprim::DomainFile;
 use http::StatusCode;
 
 mod domainprim {
@@ -85,6 +86,7 @@ mod domainprim {
     }
 
     /// A regular file or directory.
+    #[derive(Debug)]
     pub struct DomainFile {
         /// The path to the file or directory.
         pub path: ResolvedPath,
@@ -257,6 +259,11 @@ not user-controllable, or maybe not?"#,
             *limit_reached = true;
         }
 
+        // Sort by name, both, from latest to earliest modification times.
+        // I didn't want to expose the order of the filesystem.
+        dirs.sort_unstable_by(|a, b| b.last_modified.cmp(&a.last_modified));
+        files.sort_unstable_by(|a, b| b.last_modified.cmp(&a.last_modified));
+
         Ok(())
     }
 
@@ -308,23 +315,18 @@ enum MyError {
         #[source]
         std::io::Error,
     ),
-
-    /// Sailfish (template engine) error
-    #[error("Internal Server Error, S")]
-    SailfishRenderError(
-        #[from]
-        #[source]
-        sailfish::RenderError,
-    ),
 }
 
 /// Serve a file or directory, downloading if a regular file,
 /// or listing if a directory.
 async fn serve_user_path_core(
     userpath: axum::extract::Path<String>,
-) -> Result<Html<String>, MyError> {
+    directories: &mut Vec<DomainFile>,
+    files: &mut Vec<DomainFile>,
+    limit_reached: &mut bool,
+) -> Result<(), MyError> {
     // Domain-specific primitives
-    use crate::domainprim::{admitpathbuf, dirlist, pathresolve, DomainFile, ResolvedPath};
+    use crate::domainprim::{admitpathbuf, dirlist, pathresolve, ResolvedPath};
 
     // What's up, user. How are you doing?
     let userpath: String = userpath.0;
@@ -373,61 +375,55 @@ async fn serve_user_path_core(
         return Err(MyError::NotFound);
     }
 
-    // A directory. List it.
-    // Start by setting aside some space in memory for
-    // the files and sub-directories.
-    let mut files = Vec::new();
-    let mut directories = Vec::new();
-    let mut limit_reached = false;
-
-    // List the directory with a limit of 3000 files.
+    // A directory. List it with a limit of 3000 files.
     dirlist::<3000>(
         // path (user's control)
         &userpathreal,
         // don't go outside of the root directory (server's control)
         &rootdir,
         // and collect directories here
-        &mut directories,
+        directories,
         // collect regular files here
-        &mut files,
+        files,
         // lastly, set this flag if the limit is reached
-        &mut limit_reached,
+        limit_reached,
     )
     .await?;
 
-    // Generate HTML
-    use sailfish::TemplateOnce;
-
-    /// My template for a directory listing.
-    #[derive(TemplateOnce)]
-    #[template(path = "directory.stpl")]
-    struct DirectoryTemplate<'a> {
-        files: &'a Vec<DomainFile>,
-        directories: &'a Vec<DomainFile>,
-        limit_reached: bool,
-    }
-
-    // Generate HTML
-    let instance = DirectoryTemplate {
-        files: &files,
-        directories: &directories,
-        limit_reached,
-    };
-    let html = instance.render_once()?;
-
-    // Go
-    Ok(Html(html))
+    Ok(())
 }
 
-async fn serve_user_path(userpath: axum::extract::Path<String>) -> (StatusCode, Html<String>) {
-    let reply = serve_user_path_core(userpath).await;
+/// A response to the user
+#[derive(serde::Serialize)]
+enum ResponseToUser {
+    #[serde(rename = "items")]
+    Items {
+        directories: Vec<DomainFile>,
+        files: Vec<DomainFile>,
+        limit_reached: bool,
+    },
+    #[serde(rename = "error")]
+    Error { status: u16, message: &'static str },
+}
+
+async fn serve_user_path(
+    userpath: axum::extract::Path<String>,
+) -> (StatusCode, axum::response::Json<ResponseToUser>) {
+    let mut directories = Vec::new();
+    let mut files = Vec::new();
+    let mut limit_reached = false;
+    let reply =
+        serve_user_path_core(userpath, &mut directories, &mut files, &mut limit_reached).await;
 
     // If there's a not found error, then return a 404.
     if let Err(MyError::NotFound) = reply {
-        return (StatusCode::NOT_FOUND, Html(
-            "<html><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1></body></html>"
-                .to_string(),
-        ));
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ResponseToUser::Error {
+                status: 404,
+                message: "Not Found",
+            }),
+        );
     }
 
     // If there's any other error, then return a 500.
@@ -435,14 +431,23 @@ async fn serve_user_path(userpath: axum::extract::Path<String>) -> (StatusCode, 
         // Log it
         tracing::error!("error: {:#?}", reply);
 
-        return (StatusCode::INTERNAL_SERVER_ERROR, Html(
-            "<html><head><title>500 Internal Server Error</title></head><body><h1>500 Internal Server Error</h1></body></html>"
-                .to_string(),
-        ));
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ResponseToUser::Error {
+                status: 500,
+                message: "Internal Server Error",
+            }),
+        );
     }
 
-    // If there's no error, then return the HTML.
-    (StatusCode::OK, reply.unwrap())
+    (
+        StatusCode::OK,
+        Json(ResponseToUser::Items {
+            directories,
+            files,
+            limit_reached,
+        }),
+    )
 }
 
 #[tokio::main]
