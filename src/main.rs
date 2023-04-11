@@ -553,12 +553,12 @@ async fn gen_thumb<const TW: u32, const TH: u32>(
     let join = tokio::task::spawn_blocking(move || {
         let img = image::io::Reader::new(cursor);
         let img = img.with_guessed_format()?;
-        let img = img.decode().context("cannot decode image")?;
+        let img = img.decode().context("gen_thumb: cannot decode image")?;
         let img = img.thumbnail(TW, TH);
         let format = image::ImageOutputFormat::Jpeg(50);
         let mut cursor = std::io::Cursor::new(vec![]);
         img.write_to(&mut cursor, format)
-            .context("cannot write image")?;
+            .context("gen_thumb: cannot write image")?;
         Ok(cursor.into_inner())
     });
     join.await.context("gen_thumb: thread join fail")?
