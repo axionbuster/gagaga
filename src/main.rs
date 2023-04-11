@@ -24,7 +24,9 @@ mod domainprim {
     fn systime2datetime(t: std::time::SystemTime) -> Option<DateTime> {
         t.duration_since(std::time::UNIX_EPOCH)
             .ok()
-            .map(|d| chrono::Utc.timestamp_opt(d.as_secs() as i64, d.subsec_nanos()))
+            .map(|d| {
+                chrono::Utc.timestamp_opt(d.as_secs() as i64, d.subsec_nanos())
+            })
             .map(|t| t.single().unwrap())
     }
 
@@ -45,7 +47,9 @@ mod domainprim {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match self {
                 UnifiedError::NotFound(e) => write!(f, "Not found: {}", e),
-                UnifiedError::InternalServerError(e) => write!(f, "Internal server error: {}", e),
+                UnifiedError::InternalServerError(e) => {
+                    write!(f, "Internal server error: {}", e)
+                }
             }
         }
     }
@@ -60,7 +64,8 @@ mod domainprim {
                     (StatusCode::NOT_FOUND, r#"{"status":404}"#).into_response()
                 }
                 UnifiedError::InternalServerError(_) => {
-                    (StatusCode::INTERNAL_SERVER_ERROR, r#"{"status":500}"#).into_response()
+                    (StatusCode::INTERNAL_SERVER_ERROR, r#"{"status":500}"#)
+                        .into_response()
                 }
             }
         }
@@ -98,7 +103,10 @@ mod domainprim {
     /// Attempt to resolve a path asynchronously and admit it if
     /// it is a subpath of the right path, an absolute, similarly
     /// resolved path.
-    pub async fn pathresolve(path: &Path, parent: &ResolvedPath) -> Result<ResolvedPath> {
+    pub async fn pathresolve(
+        path: &Path,
+        parent: &ResolvedPath,
+    ) -> Result<ResolvedPath> {
         // Ask Tokio to resolve the path asynchronously
         let path = tokio::fs::canonicalize(path).await;
         let path: PathBuf = path?;
@@ -239,8 +247,9 @@ mod domainprim {
 
             let json = serde_json::to_string(&self);
             if json.is_err() {
-                let mut response =
-                    http::Response::new(Body::from(r#"{"error":"Internal server error"}"#));
+                let mut response = http::Response::new(Body::from(
+                    r#"{"error":"Internal server error"}"#,
+                ));
                 *response.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
                 return response.into_response();
             }
@@ -407,7 +416,9 @@ async fn serve_user_path(
     userpath: Option<axum::extract::Path<String>>,
 ) -> domainprim::Result<axum::response::Response> {
     // Domain-specific primitives
-    use crate::domainprim::{dirlist, pathresolve, ResolvedPath, UnifiedError::*};
+    use crate::domainprim::{
+        dirlist, pathresolve, ResolvedPath, UnifiedError::*,
+    };
 
     // Executable's directory. Will refactor to consider other places
     // than just the place where the executable is.
