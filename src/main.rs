@@ -57,13 +57,11 @@ mod domainprim {
 
             match self {
                 UnifiedError::NotFound(_) => {
-                    (StatusCode::NOT_FOUND, r#"{"error":"Not found"}"#).into_response()
+                    (StatusCode::NOT_FOUND, r#"{"status":404}"#).into_response()
                 }
-                UnifiedError::InternalServerError(_) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    r#"{"error":"Internal server error"}"#,
-                )
-                    .into_response(),
+                UnifiedError::InternalServerError(_) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, r#"{"status":500}"#).into_response()
+                }
             }
         }
     }
