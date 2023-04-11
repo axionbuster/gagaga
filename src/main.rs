@@ -23,11 +23,11 @@ mod domainprim {
     use tracing::instrument;
 
     /// UTC DateTime
-    type DateTime = chrono::DateTime<chrono::Utc>;
+    pub type DateTime = chrono::DateTime<chrono::Utc>;
 
     /// Attempt to convert a SystemTime (returned on file statistics calls)
     /// to the DateTime type. How inconvenient is this?
-    fn systime2datetime(t: std::time::SystemTime) -> Option<DateTime> {
+    pub fn systime2datetime(t: std::time::SystemTime) -> Option<DateTime> {
         t.duration_since(std::time::UNIX_EPOCH)
             .ok()
             .map(|d| {
@@ -89,7 +89,7 @@ mod domainprim {
 
     /// An absolute, resolved file path that was trusted when it was created.
     /// This is relative to the server's computer.
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     pub struct ResolvedPath(PathBuf);
 
     impl ResolvedPath {
@@ -124,9 +124,9 @@ mod domainprim {
         // If that fails, try prepending the current working directory.
         let path: PathBuf = match path {
             Ok(path) => path,
-            Err(_) => tokio::fs::canonicalize(workdir.as_ref().join(pathuser))
-                .await
-                .context("Failed to resolve path")?,
+            Err(_) => {
+                tokio::fs::canonicalize(workdir.as_ref().join(pathuser)).await?
+            }
         };
 
         // Decide whether the resolved path is a subpath of the parent
@@ -140,7 +140,8 @@ mod domainprim {
     }
 
     /// A file, directory, or similar objects of interest
-    pub struct DomainFile {
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    struct DomainFile {
         /// The file as found on the server, relative to the servicing directory
         pub server_path: PathBuf,
         /// Metadata: last modified time, if available
@@ -252,9 +253,9 @@ mod domainprim {
     /// A directory listing
     #[derive(Serialize)]
     pub struct DomainDirListing {
-        pub truncated: bool,
-        pub files: Vec<DomainFile>,
-        pub directories: Vec<DomainFile>,
+        truncated: bool,
+        files: Vec<DomainFile>,
+        directories: Vec<DomainFile>,
     }
 
     // Return an Axum response using the serialized JSON
@@ -429,6 +430,160 @@ mod domainprim {
     }
 }
 
+mod cachethumb {
+    //! Cache some thumbnails!!!
+    //!
+    //! To issue an instruction to the cache manager, construct
+    //! an appropriate type of message, and send it to the
+    //! cache manager's channel.
+    //!
+    //! You are responsible for:
+    //! (1) spawning the cache manager process (it's a logical process),
+    //! (2) composing messages to the cache manager process.
+    //!
+    //! The cache manager process will spawn a background task
+    //! to inspect the file system to determine freshness and
+    //! order all the cache operations.
+    //!
+    //! Why do this:
+    //! - The data structure, HashMap, is single threaded, which
+    //! requires the serialization of all instructions.
+    //! - I find it simpler than having to deal with concurrency
+    //! hazards myself in other places than this.
+    //! - It's concurrent anyway so it's hard.
+    //!
+    //! Example:
+    //! - Call spawn_cache_process() to get a channel to the cache manager.
+    //! It also spawns it!
+    //! - Compose CacheMessage::Insert(...) to insert a new thumbnail.
+    //! Send it to the channel returned by the previous step.
+    //! - Compose CacheMessage::Get(...) to get a thumbnail. Send it.
+    //!
+    //! For each one of these cases above, respectively, you can use:
+    //! - [`spawn_cache_process`]
+    //! - [`ins`]
+    //! - [`xget`]
+
+    use tokio::sync::mpsc;
+    use tracing::instrument;
+
+    use crate::domainprim::{systime2datetime, DateTime, ResolvedPath};
+
+    use std::collections::HashMap;
+
+    /// A message to the cache manager "process" (logical).
+    #[derive(Debug)]
+    pub enum CacheMessage {
+        /// Insert a new thumbnail (Vec<u8>) now.
+        Insert(ResolvedPath, Vec<u8>),
+        /// Get a thumbnail (Vec<u8>) now only if fresh.
+        ///
+        /// The manager will inspect the file system asynchronously to
+        /// determine freshness if necessary.
+        Get(ResolvedPath, tokio::sync::oneshot::Sender<Option<Vec<u8>>>),
+    }
+
+    pub type MessageMpsc = mpsc::UnboundedSender<CacheMessage>;
+
+    /// A cache manager "process" (logical). It's defined by an implicit
+    /// main loop, and it's not a real OS process. But whatever.
+    /// For each message, use a one shot channel to communicate.
+    #[instrument]
+    pub fn spawn_cache_process() -> MessageMpsc {
+        // Define the main loop and spawn it, too.
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            // Global data structure
+            let mut cache: HashMap<ResolvedPath, (DateTime, Vec<u8>)> =
+                HashMap::new();
+            // Event loop
+            while let Some(msg) = rx.recv().await {
+                match msg {
+                    CacheMessage::Insert(path, data) => {
+                        tracing::debug!("Got insert");
+                        let now = chrono::Utc::now();
+                        cache.insert(path, (now, data));
+                    }
+                    CacheMessage::Get(path, reply_to) => {
+                        // Inspect the hashmap and then the filesystem to determine freshness.
+                        // If fresh, send the blob (Vec<u8>) back to (reply_to).
+                        // Otherwise, send None back to (reply_to).
+
+                        if !cache.contains_key(&path) {
+                            tracing::debug!(
+                                "Get {path:?} was stale (not in cache)"
+                            );
+                            reply_to.send(None).unwrap();
+                            continue;
+                        }
+
+                        // Now, inspect the filesystem.
+                        let metadata = tokio::fs::metadata(path.as_ref()).await;
+                        // For any I/O errors, just ignore it quietly.
+                        if metadata.is_err() {
+                            tracing::debug!(
+                                "Get {path:?} was 'stale' (I/O error)"
+                            );
+                            reply_to.send(None).unwrap();
+                            continue;
+                        }
+                        let metadata = metadata.unwrap();
+                        let flastmod =
+                            metadata.modified().ok().and_then(systime2datetime);
+                        // If can't get the modification time, then just ignore it quietly.
+                        if flastmod.is_none() {
+                            tracing::debug!(
+                                "Get {path:?} was 'stale' (no lastmod in fs)"
+                            );
+                            reply_to.send(None).unwrap();
+                            continue;
+                        }
+                        let flastmod = flastmod.unwrap();
+
+                        // Compare against memory.
+                        let (clastmod, data) = cache.get(&path).unwrap();
+                        let clastmod = *clastmod;
+
+                        // Decide.
+                        if flastmod > clastmod {
+                            // Stale
+                            tracing::debug!(
+                                "Get {path:?} was stale (fs > cache)"
+                            );
+                            reply_to.send(None).unwrap();
+                        } else {
+                            // Fresh
+                            tracing::debug!("Get {path:?} was fresh");
+                            reply_to.send(Some(data.clone())).unwrap();
+                        }
+
+                        continue;
+                    }
+                }
+            }
+        });
+        tx
+    }
+
+    /// Insert a new thumbnail (Vec<u8>) now.
+    pub fn ins(path: &ResolvedPath, data: Vec<u8>, chan: &MessageMpsc) {
+        chan.send(CacheMessage::Insert(path.clone(), data)).unwrap()
+    }
+
+    /// Get a thumbnail (Vec<u8>) now only if fresh.
+    ///
+    /// "x" stands for "extra" --- that means be careful about the interactions.
+    pub async fn xget(
+        path: &ResolvedPath,
+        chan: &MessageMpsc,
+    ) -> Option<Vec<u8>> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        chan.send(CacheMessage::Get(path.clone(), tx)).unwrap();
+        rx.await.unwrap()
+    }
+}
+
+/// The root directory of the server.
 static ROOT: OnceCell<domainprim::ResolvedPath> = OnceCell::const_new();
 
 /// Serve a file or directory, downloading if a regular file,
@@ -524,6 +679,9 @@ async fn serve_svg(svg: &'static str) -> axum::response::Response {
     response.into_response()
 }
 
+/// A thumbnail cache, shared between all threads, a channel.
+static CACHEMPSC: OnceCell<cachethumb::MessageMpsc> = OnceCell::const_new();
+
 /// Serve a specific thumbnail in JPEG format where possible.
 /// If the thumbnail is not available, then serve a default thumbnail.
 ///
@@ -534,6 +692,9 @@ async fn serve_thumb<const TW: u32, const TH: u32>(
 ) -> domainprim::Result<axum::response::Response> {
     // Domain-specific primitives
     use crate::domainprim::pathresolve;
+
+    // Caching stuff
+    use crate::cachethumb;
 
     let rootdir = ROOT.get().unwrap();
 
@@ -559,9 +720,29 @@ async fn serve_thumb<const TW: u32, const TH: u32>(
 
     // A file. Generate a thumbnail. If successful, serve it.
     // Otherwise, serve the file icon.
-    let thumb: Vec<u8> = match gen_thumb::<TW, TH>(userpathreal).await {
-        Ok(value) => value,
-        Err(_value) => return Ok(serve_svg(SVG_FILE).await),
+
+    // See if we got a fresh one.
+    let thumb_recall =
+        cachethumb::xget(&userpathreal, CACHEMPSC.get().unwrap()).await;
+    let thumb: Vec<u8> = match thumb_recall {
+        // Fresh
+        Some(thumb) => thumb,
+        // Stale or nonexistent
+        None => {
+            // Make a thumbnail.
+            let thumb = match gen_thumb::<TW, TH>(&userpathreal).await {
+                Ok(value) => value,
+                // Quietly ignore errors in this step.
+                Err(_value) => return Ok(serve_svg(SVG_FILE).await),
+            };
+            // Send the thumbnail to the cache.
+            cachethumb::ins(
+                &userpathreal,
+                thumb.clone(),
+                CACHEMPSC.get().unwrap(),
+            );
+            thumb
+        }
     };
     let response = axum::response::Response::builder()
         .header("Content-Type", "image/jpeg")
@@ -577,7 +758,7 @@ async fn serve_thumb<const TW: u32, const TH: u32>(
 /// thread using Tokio.
 #[instrument]
 async fn gen_thumb<const TW: u32, const TH: u32>(
-    userpathreal: domainprim::ResolvedPath,
+    userpathreal: &domainprim::ResolvedPath,
 ) -> domainprim::Result<Vec<u8>> {
     let mut file = tokio::fs::File::open(userpathreal.as_ref()).await?;
     let mut buf = vec![];
@@ -662,6 +843,10 @@ async fn main() {
 
     let root = domainprim::ResolvedPath::from_trusted_pathbuf(root);
     ROOT.set(root).unwrap();
+
+    // Also, primitively cache the thumbnails.
+    let cache_mpsc = cachethumb::spawn_cache_process();
+    CACHEMPSC.set(cache_mpsc).unwrap();
 
     // Build app
     let app = Router::new()
