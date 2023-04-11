@@ -140,7 +140,6 @@ mod domainprim {
     }
 
     /// A file, directory, or similar objects of interest
-    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
     struct DomainFile {
         /// The file as found on the server, relative to the servicing directory
         pub server_path: PathBuf,
@@ -170,11 +169,6 @@ mod domainprim {
                 } | if custom_thumbnail { 4 } else { 0 },
             }
         }
-
-        /// Decide if this is a file
-        // pub fn is_file(&self) -> bool {
-        //     self.flags & 0b11 == 1
-        // }
 
         /// Decide if this is a directory
         pub fn is_directory(&self) -> bool {
