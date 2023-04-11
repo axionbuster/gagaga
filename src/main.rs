@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
-use axum::{routing::get, Router};
-use domainprim::DomainDirListing;
+use anyhow::Context;
+use axum::{response::IntoResponse, routing::get, Router};
+use tokio::io::AsyncReadExt;
 
 mod domainprim {
     //! Define domain-specific types and processes
@@ -193,14 +194,14 @@ mod domainprim {
 
             // Client's thumbnail URL to view or download
             // Synopsis: if no custom thumbnail, then use "/thumbdir" for directories
-            // and "/thumbgeneric" for any other. If custom thumbnail, then use
+            // and "/thumb" for any other. If custom thumbnail, then use
             // "/thumb/{}" (with the path).
             let thumb_url = if self.has_custom_thumbnail() {
                 format!("/thumb/{}", rootrelpath)
             } else if self.is_directory() {
                 "/thumbdir".to_string()
             } else {
-                "/thumbgeneric".to_string()
+                "/thumb".to_string()
             };
 
             // Last Modified in RFC3339 / ISO8601 format
@@ -326,6 +327,7 @@ mod domainprim {
             } else if metadata.is_file() {
                 // Decide whether the file should have a custom thumbnail
                 let use_custom_thumbnail = extjpeg(path.as_ref());
+
                 domaindir.files.push(DomainFile::new(
                     server_path,
                     last_modified,
@@ -360,7 +362,7 @@ mod domainprim {
     /// the file might be one of the thumbnail-supported JPEG file.
     /// I will refactor this code to support more than just JPEG. But, for now,
     /// I'm going to delegate the flexibility to the human programmer.
-    pub fn extjpeg(path: &Path) -> bool {
+    fn extjpeg(path: &Path) -> bool {
         let ext = path.extension();
         if ext.is_none() {
             return false;
@@ -405,7 +407,7 @@ mod domainprim {
 /// or listing if a directory.
 async fn serve_user_path(
     userpath: axum::extract::Path<String>,
-) -> domainprim::Result<DomainDirListing> {
+) -> domainprim::Result<axum::response::Response> {
     // Domain-specific primitives
     use crate::domainprim::{dirlist, pathresolve, ResolvedPath, UnifiedError::*};
 
@@ -423,19 +425,32 @@ async fn serve_user_path(
     // ResolvedPath, it's guaranteed to be absolute and within the root directory.
     let userpathreal = pathresolve(&userpath, &rootdir).await?;
 
-    // Check if the path is a directory or a file, setting the flags.
+    // Check if the path points to a directory or a file.
     let filemetadata = userpathreal.as_ref().metadata()?;
 
     // If it's a regular file, then download it.
     if filemetadata.is_file() {
-        // TODO: download the file
-        return Err(InternalServerError(anyhow::anyhow!("not implemented")));
+        // download the file
+
+        // First, let Tokio read it asynchronously.
+        let mut file = tokio::fs::File::open(userpathreal.as_ref()).await?;
+        // Read everything into a Vec<u8>.
+        let mut buf = vec![];
+        file.read_to_end(&mut buf).await?;
+        // Axum: make a response.
+        let response = axum::response::Response::builder()
+            .header("Content-Type", "application/octet-stream")
+            .body(axum::body::Body::from(buf))
+            .context("file send make response")?;
+        let response = response.into_response();
+
+        return Ok(response);
     }
 
     // If it's not a directory, then say, not found.
     if !filemetadata.is_dir() {
         return Err(NotFound(anyhow::anyhow!(
-            "supc, neither a file nor a directory"
+            "serve_user_path: neither a file nor a directory"
         )));
     }
 
@@ -448,7 +463,9 @@ async fn serve_user_path(
     )
     .await?;
 
-    Ok(list)
+    let response = list.into_response();
+
+    Ok(response)
 }
 
 #[tokio::main]
