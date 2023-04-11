@@ -404,24 +404,30 @@ mod domainprim {
 /// Serve a file or directory, downloading if a regular file,
 /// or listing if a directory.
 async fn serve_user_path(
-    userpath: axum::extract::Path<String>,
+    userpath: Option<axum::extract::Path<String>>,
 ) -> domainprim::Result<axum::response::Response> {
     // Domain-specific primitives
     use crate::domainprim::{dirlist, pathresolve, ResolvedPath, UnifiedError::*};
 
-    // What's up, user. How are you doing?
-    let userpath: String = userpath.0;
-    let userpath: PathBuf = PathBuf::from(userpath);
-
     // Executable's directory. Will refactor to consider other places
     // than just the place where the executable is.
+    // FIXME: refactor.
     let rootdir: PathBuf = std::env::current_dir()?;
     let rootdir = ResolvedPath::from_trusted_pathbuf(rootdir);
+
+    // If the user didn't provide a path, then serve the root directory.
+    let user: PathBuf = if userpath.is_none() {
+        // FIXME: Use a given root path instead of the executable's directory
+        // ("./").
+        PathBuf::from("./")
+    } else {
+        PathBuf::from(userpath.unwrap().as_str())
+    };
 
     // Resolve the path (convert user's path to server's absolute path, as well as
     // following symlinks and all that). Note: according to the contract of
     // ResolvedPath, it's guaranteed to be absolute and within the root directory.
-    let userpathreal = pathresolve(&userpath, &rootdir).await?;
+    let userpathreal = pathresolve(&user, &rootdir).await?;
 
     // Check if the path points to a directory or a file.
     let filemetadata = userpathreal.as_ref().metadata()?;
@@ -466,6 +472,22 @@ async fn serve_user_path(
     Ok(response)
 }
 
+/// SVG Icon for folder, Font Awesome.
+const SVG_FOLDER: &str = include_str!("folder-solid.svg");
+
+/// SVG Icon for file, Font Awesome.
+const SVG_FILE: &str = include_str!("file-solid.svg");
+
+/// Serve a static SVG file
+async fn serve_svg(svg: &'static str) -> axum::response::Response {
+    let response = axum::response::Response::builder()
+        .header("Content-Type", "image/svg+xml")
+        .body(axum::body::Body::from(svg))
+        .context("svg send make response")
+        .unwrap();
+    response.into_response()
+}
+
 #[tokio::main]
 async fn main() {
     // Set up logging
@@ -473,11 +495,10 @@ async fn main() {
 
     // Build app
     let app = Router::new()
-        .route(
-            "/root",
-            get(|| async { serve_user_path(axum::extract::Path("./".to_string())).await }),
-        )
-        .route("/root/*userpath", get(serve_user_path));
+        .route("/root", get(|| async { serve_user_path(None).await }))
+        .route("/root/*userpath", get(serve_user_path))
+        .route("/thumb", get(|| async { serve_svg(SVG_FILE).await }))
+        .route("/thumbdir", get(|| async { serve_svg(SVG_FOLDER).await }));
 
     // Start server, listening on port 3000
     axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
