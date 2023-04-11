@@ -38,7 +38,7 @@ mod domainprim {
             anyhow::Error,
         ),
         /// 404 Not Found
-        NotFound(anyhow::Error),
+        NotFound(#[source] anyhow::Error),
     }
 
     impl Display for UnifiedError {
