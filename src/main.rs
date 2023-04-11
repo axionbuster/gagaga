@@ -6,7 +6,7 @@ use axum::{
     routing::get,
     Router,
 };
-use tokio::io::AsyncReadExt;
+use tokio::{io::AsyncReadExt, sync::OnceCell};
 use tracing::instrument;
 
 mod domainprim {
@@ -20,6 +20,7 @@ mod domainprim {
     use anyhow::Context;
     use chrono::TimeZone;
     use serde::{ser::SerializeMap, Serialize};
+    use tracing::instrument;
 
     /// UTC DateTime
     type DateTime = chrono::DateTime<chrono::Utc>;
@@ -105,21 +106,33 @@ mod domainprim {
         }
     }
 
-    /// Attempt to resolve a path asynchronously and admit it if
-    /// it is a subpath of the right path, an absolute, similarly
-    /// resolved path.
+    /// Attempt to canonicalize path (`pathuser`) if found. If not found,
+    /// try prepending the current working directory. If still not found,
+    /// return an error. Also, once resolved, compare the canonical
+    /// path to the parent path. If outside, return an error.
+    /// Otherwise, return the absolute, canonicalized path.
+    #[instrument(err)]
     pub async fn pathresolve(
-        path: &Path,
-        parent: &ResolvedPath,
+        pathuser: &Path,
+        workdir: &ResolvedPath,
     ) -> Result<ResolvedPath> {
         // Ask Tokio to resolve the path asynchronously
-        let path = tokio::fs::canonicalize(path).await;
-        let path: PathBuf = path?;
+
+        // First, try on its own.
+        let path = tokio::fs::canonicalize(pathuser).await;
+
+        // If that fails, try prepending the current working directory.
+        let path: PathBuf = match path {
+            Ok(path) => path,
+            Err(_) => tokio::fs::canonicalize(workdir.as_ref().join(pathuser))
+                .await
+                .context("Failed to resolve path")?,
+        };
 
         // Decide whether the resolved path is a subpath of the parent
-        if !path.starts_with(parent.as_ref()) {
+        if !path.starts_with(workdir.as_ref()) {
             return Err(UnifiedError::NotFound(anyhow::anyhow!(
-                "Path is not a subpath of the parent"
+                "Path {path:?} is not a subpath of the working directory {workdir:?}"
             )));
         }
 
@@ -276,6 +289,7 @@ mod domainprim {
     ///
     /// A hard-coded limit of N entries apply. If the limit is reached,
     /// then the limit_reached flag is set to true.
+    #[instrument(err)]
     pub async fn dirlist<const N: usize>(
         path: &ResolvedPath,
         parent_path: &ResolvedPath,
@@ -415,33 +429,27 @@ mod domainprim {
     }
 }
 
+static ROOT: OnceCell<domainprim::ResolvedPath> = OnceCell::const_new();
+
 /// Serve a file or directory, downloading if a regular file,
 /// or listing if a directory.
-#[instrument]
+#[instrument(err)]
 async fn serve_user_path(
     userpath: Option<axum::extract::Path<String>>,
 ) -> domainprim::Result<axum::response::Response> {
     // Domain-specific primitives
-    use crate::domainprim::{
-        dirlist, pathresolve, ResolvedPath, UnifiedError::*,
-    };
+    use crate::domainprim::{dirlist, pathresolve, UnifiedError::*};
 
-    // Executable's directory. Will refactor to consider other places
-    // than just the place where the executable is.
-    // FIXME: refactor.
-    let rootdir: PathBuf = std::env::current_dir()?;
-    let rootdir = ResolvedPath::from_trusted_pathbuf(rootdir);
+    let rootdir = ROOT.get().unwrap();
 
     // If the user didn't provide a path, then serve the root directory.
     let user: PathBuf = if userpath.is_none() {
-        // FIXME: Use a given root path instead of the executable's directory
-        // ("./").
-        PathBuf::from("./")
+        PathBuf::from(rootdir.as_ref())
     } else {
         let userpath = userpath.unwrap();
         let userpath = userpath.as_str();
         if userpath == "/" {
-            PathBuf::from("./")
+            PathBuf::from(rootdir.as_ref())
         } else {
             PathBuf::from(userpath)
         }
@@ -450,7 +458,7 @@ async fn serve_user_path(
     // Resolve the path (convert user's path to server's absolute path, as well as
     // following symlinks and all that). Note: according to the contract of
     // ResolvedPath, it's guaranteed to be absolute and within the root directory.
-    let userpathreal = pathresolve(&user, &rootdir).await?;
+    let userpathreal = pathresolve(&user, rootdir).await?;
 
     // Check if the path points to a directory or a file.
     let filemetadata = userpathreal.as_ref().metadata()?;
@@ -460,7 +468,11 @@ async fn serve_user_path(
         // download the file
 
         // First, let Tokio read it asynchronously.
-        let mut file = tokio::fs::File::open(userpathreal.as_ref()).await?;
+        let mut file = tokio::fs::File::open(userpathreal.as_ref())
+            .await
+            .with_context(|| {
+                format!("Cannot open real file path {userpathreal:?}")
+            })?;
         // Read everything into a Vec<u8>.
         let mut buf = vec![];
         file.read_to_end(&mut buf).await?;
@@ -486,7 +498,7 @@ async fn serve_user_path(
         // path (user's control)
         &userpathreal,
         // don't go outside of the root directory (server's control)
-        &rootdir,
+        rootdir,
     )
     .await?;
 
@@ -521,20 +533,16 @@ async fn serve_thumb<const TW: u32, const TH: u32>(
     userpath: axum::extract::Path<String>,
 ) -> domainprim::Result<axum::response::Response> {
     // Domain-specific primitives
-    use crate::domainprim::{pathresolve, ResolvedPath};
+    use crate::domainprim::pathresolve;
 
-    // Executable's directory. Will refactor to consider other places
-    // than just the place where the executable is.
-    // FIXME: refactor.
-    let rootdir: PathBuf = std::env::current_dir()?;
-    let rootdir = ResolvedPath::from_trusted_pathbuf(rootdir);
+    let rootdir = ROOT.get().unwrap();
 
     let user = PathBuf::from(userpath.as_str());
 
     // Resolve the path (convert user's path to server's absolute path, as well as
     // following symlinks and all that). Note: according to the contract of
     // ResolvedPath, it's guaranteed to be absolute and within the root directory.
-    let userpathreal = pathresolve(&user, &rootdir).await?;
+    let userpathreal = pathresolve(&user, rootdir).await?;
 
     // Check if the path points to a directory or a file.
     let filemetadata = userpathreal.as_ref().metadata()?;
@@ -626,6 +634,34 @@ async fn main() {
 
     // Set up logging
     tracing_subscriber::fmt::init();
+
+    // Before building app, ROOT must be set. It is the root directory
+    // serving data.
+    // First, check the arguments. We make a few assumptions.
+    //  1. The first argument is the path to the executable.
+    //  2. The second argument is the path to the root directory. <--- what we want.
+    //  3. No glob patterns are used from the perspective of the program.
+    //  (Unix/Linux shells typically expand them before passing them onto us.
+    //   Windows shells typically don't expand them at all.)
+    let args: Vec<String> = std::env::args().collect();
+    let root = if args.len() < 2 {
+        // Let the user know that the program expects a path to the root directory.
+        // Still, we will use the current directory as the root directory.
+        tracing::info!("No root directory specified. Using current directory. Usage: ./(program) (root directory)");
+        std::env::current_dir().unwrap()
+    } else {
+        tracing::info!("Root directory specified: {arg:?}", arg = &args[1]);
+        // TODO: Let the user know if the path uses glob patterns.
+        let temp = PathBuf::from(&args[1]);
+        tokio::fs::canonicalize(temp)
+            .await
+            .context("The root directory as specified failed to canonicalize")
+            .unwrap()
+    };
+    tracing::info!("Serving at {root:?}");
+
+    let root = domainprim::ResolvedPath::from_trusted_pathbuf(root);
+    ROOT.set(root).unwrap();
 
     // Build app
     let app = Router::new()
