@@ -1,0 +1,52 @@
+/* ChatGPT */
+
+:root {
+    --bg-color: white;
+    --text-color: black;
+}
+
+body.dark-mode {
+    --bg-color: #1e1e1e;
+    --text-color: white;
+}
+
+body {
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    font-family: Arial, sans-serif;
+}
+
+.container {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+button {
+    margin-bottom: 10px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    padding: 10px;
+    border: 1px solid var(--text-color);
+    text-align: left;
+}
+
+th {
+    cursor: pointer;
+}
+
+tr:hover {
+    background-color: rgba(0, 0, 0, 0.1);
+}
+
+img {
+    width: 200px;
+    height: auto;
+    object-fit: contain;
+}

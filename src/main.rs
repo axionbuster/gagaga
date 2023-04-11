@@ -1,8 +1,13 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
-use axum::{response::IntoResponse, routing::get, Router};
+use axum::{
+    response::{IntoResponse, Redirect},
+    routing::get,
+    Router,
+};
 use tokio::io::AsyncReadExt;
+use tracing::instrument;
 
 mod domainprim {
     //! Define domain-specific types and processes
@@ -412,6 +417,7 @@ mod domainprim {
 
 /// Serve a file or directory, downloading if a regular file,
 /// or listing if a directory.
+#[instrument]
 async fn serve_user_path(
     userpath: Option<axum::extract::Path<String>>,
 ) -> domainprim::Result<axum::response::Response> {
@@ -432,7 +438,13 @@ async fn serve_user_path(
         // ("./").
         PathBuf::from("./")
     } else {
-        PathBuf::from(userpath.unwrap().as_str())
+        let userpath = userpath.unwrap();
+        let userpath = userpath.as_str();
+        if userpath == "/" {
+            PathBuf::from("./")
+        } else {
+            PathBuf::from(userpath)
+        }
     };
 
     // Resolve the path (convert user's path to server's absolute path, as well as
@@ -490,6 +502,7 @@ const SVG_FOLDER: &str = include_str!("folder-solid.svg");
 const SVG_FILE: &str = include_str!("file-solid.svg");
 
 /// Serve a static SVG file
+#[instrument]
 async fn serve_svg(svg: &'static str) -> axum::response::Response {
     let response = axum::response::Response::builder()
         .header("Content-Type", "image/svg+xml")
@@ -503,6 +516,7 @@ async fn serve_svg(svg: &'static str) -> axum::response::Response {
 /// If the thumbnail is not available, then serve a default thumbnail.
 ///
 /// Preserve aspect ratio while fitting in TWxTH.
+#[instrument]
 async fn serve_thumb<const TW: u32, const TH: u32>(
     userpath: axum::extract::Path<String>,
 ) -> domainprim::Result<axum::response::Response> {
@@ -553,6 +567,7 @@ async fn serve_thumb<const TW: u32, const TH: u32>(
 ///
 /// Because the generation can take a long time, it is delegated in a blocking
 /// thread using Tokio.
+#[instrument]
 async fn gen_thumb<const TW: u32, const TH: u32>(
     userpathreal: domainprim::ResolvedPath,
 ) -> domainprim::Result<Vec<u8>> {
@@ -575,18 +590,59 @@ async fn gen_thumb<const TW: u32, const TH: u32>(
     join.await.context("gen_thumb: thread join fail")?
 }
 
+/// Serve the index page.
+#[instrument]
+async fn serve_index() -> axum::response::Html<&'static str> {
+    const INDEX_HTML: &str = include_str!("index.html");
+    axum::response::Html(INDEX_HTML)
+}
+
+/// Serve styles.css.
+#[instrument]
+async fn serve_styles() -> domainprim::Result<axum::response::Response> {
+    const STYLES_CSS: &str = include_str!("styles.css");
+    let response = axum::response::Response::builder()
+        .header("Content-Type", "text/css")
+        .body(axum::body::Body::from(STYLES_CSS))
+        .context("styles send make response")?;
+    Ok(response.into_response())
+}
+
+/// Serve scripts.js
+#[instrument]
+async fn serve_scripts() -> domainprim::Result<axum::response::Response> {
+    const SCRIPTS_JS: &str = include_str!("scripts.js");
+    let response = axum::response::Response::builder()
+        .header("Content-Type", "text/javascript")
+        .body(axum::body::Body::from(SCRIPTS_JS))
+        .context("scripts send make response")?;
+    Ok(response.into_response())
+}
+
 #[tokio::main]
+#[instrument]
 async fn main() {
+    use tower_http::trace::TraceLayer;
+
     // Set up logging
     tracing_subscriber::fmt::init();
 
     // Build app
     let app = Router::new()
+        .route("/", get(|| async { Redirect::permanent("/user") }))
         .route("/root", get(|| async { serve_user_path(None).await }))
+        .route("/root/", get(|| async { serve_user_path(None).await }))
         .route("/root/*userpath", get(serve_user_path))
         .route("/thumb", get(|| async { serve_svg(SVG_FILE).await }))
+        .route("/thumb/", get(|| async { serve_svg(SVG_FILE).await }))
         .route("/thumbdir", get(|| async { serve_svg(SVG_FOLDER).await }))
-        .route("/thumb/*userpath", get(serve_thumb::<200, 200>));
+        .route("/thumbdir/", get(|| async { serve_svg(SVG_FOLDER).await }))
+        .route("/thumb/*userpath", get(serve_thumb::<200, 200>))
+        .route("/user", get(|| async { serve_index().await }))
+        .route("/user/", get(|| async { serve_index().await }))
+        .route("/styles.css", get(|| async { serve_styles().await }))
+        .route("/scripts.js", get(|| async { serve_scripts().await }))
+        .layer(TraceLayer::new_for_http());
 
     // Start server, listening on port 3000
     axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
