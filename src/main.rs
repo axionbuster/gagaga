@@ -510,9 +510,7 @@ mod cachethumb {
                         // Otherwise, send None back to (reply_to).
 
                         if !cache.contains_key(&path) {
-                            tracing::debug!(
-                                "Get {path:?} was stale (not in cache)"
-                            );
+                            tracing::debug!("Get {path:?} was not in cache");
                             reply_to.send(None).unwrap();
                             continue;
                         }
