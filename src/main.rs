@@ -488,6 +488,82 @@ async fn serve_svg(svg: &'static str) -> axum::response::Response {
     response.into_response()
 }
 
+/// Serve a specific thumbnail in JPEG format where possible.
+/// If the thumbnail is not available, then serve a default thumbnail.
+///
+/// Preserve aspect ratio while fitting in TWxTH.
+async fn serve_thumb<const TW: u32, const TH: u32>(
+    userpath: axum::extract::Path<String>,
+) -> domainprim::Result<axum::response::Response> {
+    // Domain-specific primitives
+    use crate::domainprim::{pathresolve, ResolvedPath};
+
+    // Executable's directory. Will refactor to consider other places
+    // than just the place where the executable is.
+    // FIXME: refactor.
+    let rootdir: PathBuf = std::env::current_dir()?;
+    let rootdir = ResolvedPath::from_trusted_pathbuf(rootdir);
+
+    let user = PathBuf::from(userpath.as_str());
+
+    // Resolve the path (convert user's path to server's absolute path, as well as
+    // following symlinks and all that). Note: according to the contract of
+    // ResolvedPath, it's guaranteed to be absolute and within the root directory.
+    let userpathreal = pathresolve(&user, &rootdir).await?;
+
+    // Check if the path points to a directory or a file.
+    let filemetadata = userpathreal.as_ref().metadata()?;
+
+    // If directory, then serve the folder icon.
+    if filemetadata.is_dir() {
+        return Ok(serve_svg(SVG_FOLDER).await);
+    }
+
+    // If not file, reject. Serve the file icon.
+    if !filemetadata.is_file() {
+        return Ok(serve_svg(SVG_FILE).await);
+    }
+
+    // A file. Generate a thumbnail. If successful, serve it.
+    // Otherwise, serve the file icon.
+    let thumb: Vec<u8> = match gen_thumb::<TW, TH>(userpathreal).await {
+        Ok(value) => value,
+        Err(_value) => return Ok(serve_svg(SVG_FILE).await),
+    };
+    let response = axum::response::Response::builder()
+        .header("Content-Type", "image/jpeg")
+        .body(axum::body::Body::from(thumb))
+        .context("thumb jpeg send make response")?
+        .into_response();
+    Ok(response)
+}
+
+/// Attempt to generate a thumbnail in JPEG format with hard-coded quality.
+///
+/// Because the generation can take a long time, it is delegated in a blocking
+/// thread using Tokio.
+async fn gen_thumb<const TW: u32, const TH: u32>(
+    userpathreal: domainprim::ResolvedPath,
+) -> domainprim::Result<Vec<u8>> {
+    let mut file = tokio::fs::File::open(userpathreal.as_ref()).await?;
+    let mut buf = vec![];
+    file.read_to_end(&mut buf).await?;
+    let cursor = std::io::Cursor::new(buf);
+    // Sync block
+    let join = tokio::task::spawn_blocking(move || {
+        let img = image::io::Reader::new(cursor);
+        let img = img.with_guessed_format()?;
+        let img = img.decode().context("cannot decode image")?;
+        let img = img.thumbnail(TW, TH);
+        let format = image::ImageOutputFormat::Jpeg(50);
+        let mut cursor = std::io::Cursor::new(vec![]);
+        img.write_to(&mut cursor, format)
+            .context("cannot write image")?;
+        Ok(cursor.into_inner())
+    });
+    join.await.context("gen_thumb: thread join fail")?
+}
+
 #[tokio::main]
 async fn main() {
     // Set up logging
@@ -498,7 +574,8 @@ async fn main() {
         .route("/root", get(|| async { serve_user_path(None).await }))
         .route("/root/*userpath", get(serve_user_path))
         .route("/thumb", get(|| async { serve_svg(SVG_FILE).await }))
-        .route("/thumbdir", get(|| async { serve_svg(SVG_FOLDER).await }));
+        .route("/thumbdir", get(|| async { serve_svg(SVG_FOLDER).await }))
+        .route("/thumb/*userpath", get(serve_thumb::<200, 200>));
 
     // Start server, listening on port 3000
     axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
