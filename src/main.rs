@@ -17,7 +17,6 @@ mod domainprim {
         path::{Path, PathBuf},
     };
 
-    use anyhow::Context;
     use chrono::TimeZone;
     use serde::{ser::SerializeMap, Serialize};
     use tracing::instrument;
@@ -298,12 +297,11 @@ mod domainprim {
             if entry.is_err() {
                 continue;
             }
-            let entry: Option<tokio::fs::DirEntry> = entry?;
+            let entry: Option<tokio::fs::DirEntry> = entry.unwrap();
             // We are done if the entry is None
             if entry.is_none() {
                 break;
             }
-            // Call fstat or equivalent and gather metadata.
             let entry = entry.unwrap();
             // Resolve the path. This will also make sure that
             // the true path is a subpath of the parent path.
@@ -313,15 +311,40 @@ mod domainprim {
                 continue;
             }
             let path: ResolvedPath = path.unwrap();
-            // Strip prefix in path
+
+            // Strip prefix in path to get the server path.
+            // The server path is the path relative to the parent path.
+            // Eventually, it gets converted to URLs and display names
+            // downstream.
+            //
+            // FIXME: I think it's unnecessary to do this. Since the
+            // DirEntry has custom serialization that guards against
+            // the full path being shown anyway, maybe we could do it
+            // at the time of serialization. There's also a potential
+            // that we could avoid extra memory allocation doing it
+            // like that. But I'm not sure. It's working for now.
             let server_path = path
                 .as_ref()
                 .strip_prefix(parent_path)
-                .context("strip")
-                .map_err(|_e| anyhow::anyhow!("strip prefix path dirlist"))?;
-            let server_path = server_path.to_path_buf();
+                .map(|p| p.to_path_buf());
+            if server_path.is_err() {
+                // If there was an error while stripping the prefix,
+                // then just skip this entry.
+                // Though, I gotta say, that would be pretty weird.
+                // Let's log that.
+                tracing::warn!("Could not strip prefix in path: {path:?}; That's weird. Ignoring directory entry.");
+                continue;
+            }
+            let server_path = server_path.unwrap();
 
-            let metadata = entry.metadata().await?;
+            // Call fstat or equivalent and gather metadata.
+            // At least we wanna know the last modified time.
+            // And if my code changes in the future, maybe more.
+            let metadata = entry.metadata().await;
+            if metadata.is_err() {
+                continue;
+            }
+            let metadata = metadata.unwrap();
             let last_modified: Option<DateTime> =
                 metadata.modified().ok().and_then(systime2datetime);
 
