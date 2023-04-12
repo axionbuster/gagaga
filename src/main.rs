@@ -106,9 +106,8 @@ mod domainprim {
         }
     }
 
-    /// Attempt to canonicalize path (`pathuser`) if found. If not found,
-    /// try prepending the current working directory. If still not found,
-    /// return an error. Also, once resolved, compare the canonical
+    /// Attempt to canonicalize path (`pathuser`) if found.
+    /// Once resolved, compare the canonical
     /// path to the parent path. If outside, return an error.
     /// Otherwise, return the absolute, canonicalized path.
     #[instrument(err)]
@@ -117,17 +116,8 @@ mod domainprim {
         workdir: &ResolvedPath,
     ) -> Result<ResolvedPath> {
         // Ask Tokio to resolve the path asynchronously
-
-        // First, try on its own.
-        let path = tokio::fs::canonicalize(pathuser).await;
-
-        // If that fails, try prepending the current working directory.
-        let path: PathBuf = match path {
-            Ok(path) => path,
-            Err(_) => {
-                tokio::fs::canonicalize(workdir.as_ref().join(pathuser)).await?
-            }
-        };
+        let meantpath = workdir.as_ref().join(pathuser);
+        let path = tokio::fs::canonicalize(meantpath).await?;
 
         // Decide whether the resolved path is a subpath of the parent
         if !path.starts_with(workdir.as_ref()) {
