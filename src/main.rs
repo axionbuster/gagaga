@@ -467,7 +467,7 @@ mod cachethumb {
 
     /// A message to the cache manager "process" (logical).
     #[derive(Debug)]
-    pub enum CacheMessage {
+    enum CacheMessage {
         /// Insert a new thumbnail (Vec<u8>) now.
         Insert(ResolvedPath, Vec<u8>),
         /// Get a thumbnail (Vec<u8>) now only if fresh.
@@ -477,13 +477,15 @@ mod cachethumb {
         Get(ResolvedPath, tokio::sync::oneshot::Sender<Option<Vec<u8>>>),
     }
 
-    pub type MessageMpsc = mpsc::UnboundedSender<CacheMessage>;
+    /// A channel to the cache manager "process" (logical).
+    #[derive(Debug)]
+    pub struct Mpsc(mpsc::UnboundedSender<CacheMessage>);
 
     /// A cache manager "process" (logical). It's defined by an implicit
     /// main loop, and it's not a real OS process. But whatever.
     /// For each message, use a one shot channel to communicate.
     #[instrument]
-    pub fn spawn_cache_process() -> MessageMpsc {
+    pub fn spawn_cache_process() -> Mpsc {
         // Define the main loop and spawn it, too.
         let (tx, mut rx) = mpsc::unbounded_channel();
         tokio::spawn(async move {
@@ -554,23 +556,22 @@ mod cachethumb {
                 }
             }
         });
-        tx
+        Mpsc(tx)
     }
 
     /// Insert a new thumbnail (Vec<u8>) now.
-    pub fn ins(path: &ResolvedPath, data: Vec<u8>, chan: &MessageMpsc) {
-        chan.send(CacheMessage::Insert(path.clone(), data)).unwrap()
+    pub fn ins(path: &ResolvedPath, data: Vec<u8>, chan: &Mpsc) {
+        chan.0
+            .send(CacheMessage::Insert(path.clone(), data))
+            .unwrap()
     }
 
     /// Get a thumbnail (Vec<u8>) now only if fresh.
     ///
     /// "x" stands for "extra" --- that means be careful about the interactions.
-    pub async fn xget(
-        path: &ResolvedPath,
-        chan: &MessageMpsc,
-    ) -> Option<Vec<u8>> {
+    pub async fn xget(path: &ResolvedPath, chan: &Mpsc) -> Option<Vec<u8>> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        chan.send(CacheMessage::Get(path.clone(), tx)).unwrap();
+        chan.0.send(CacheMessage::Get(path.clone(), tx)).unwrap();
         rx.await.unwrap()
     }
 }
@@ -672,7 +673,7 @@ async fn serve_svg(svg: &'static str) -> axum::response::Response {
 }
 
 /// A thumbnail cache, shared between all threads, a channel.
-static CACHEMPSC: OnceCell<cachethumb::MessageMpsc> = OnceCell::const_new();
+static CACHEMPSC: OnceCell<cachethumb::Mpsc> = OnceCell::const_new();
 
 /// Serve a specific thumbnail in JPEG format where possible.
 /// If the thumbnail is not available, then serve a default thumbnail.
