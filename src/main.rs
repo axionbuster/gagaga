@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use anyhow::Context;
 use axum::{
     middleware::{map_request, map_response},
-    response::{IntoResponse, Redirect},
+    response::IntoResponse,
     routing::get,
     Router,
 };
@@ -378,7 +378,6 @@ async fn main() {
 
     // Build app
     let app = Router::new()
-        .route("/", get(|| async { Redirect::permanent("/user") }))
         .merge(
             // Static assets
             Router::new()
@@ -406,6 +405,7 @@ async fn main() {
                 .route("/user/*userpath", get(serve_index)) // ignore userpath
                 .layer(map_request(resolve_path)),
         )
+        .fallback(get(serve_index))
         .layer(TraceLayer::new_for_http());
 
     // Start server, listening on port 3000
