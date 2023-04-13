@@ -5,6 +5,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const tableBody = document.getElementById('tableBody');
 
     // Find the extra path.
+    // If invalid, redirect to '/user'.
     let extraPath;
     {
         const url = window.location.pathname;
@@ -21,6 +22,32 @@ document.addEventListener('DOMContentLoaded', () => {
             throw new Error('(gagaga) getLocation: Invalid path');
         }
     }
+
+    // Disable the back (..) row if and only if we are at the root.
+    if (extraPath === '' || extraPath === '/') {
+        const backRow = document.getElementById('backRow');
+        backRow.style = 'display: none;';
+    } else {
+        backRow = document.getElementById('backRow');
+        backRow.style = '';
+    }
+
+    // Do the same with the root (/) row button.
+    if (extraPath === '' || extraPath === '/') {
+        const rootRow = document.getElementById('rootRow');
+        rootRow.style = 'display: none;';
+    } else {
+        rootRow = document.getElementById('rootRow');
+        rootRow.style = '';
+    }
+
+    // When we click on the back row, we go to the parent directory.
+    backRow.addEventListener('click', () => {
+        // Find the parent directory.
+        const parent = extraPath.substring(0, extraPath.lastIndexOf('/'));
+        // Redirect (soft).
+        window.location.pathname = '/user' + parent;
+    });
 
     const loadData = async (extraPath) => {
         const response = await fetch('/root' + extraPath);

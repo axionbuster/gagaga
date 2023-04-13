@@ -46,7 +46,7 @@ tr:hover {
     background-color: rgba(0, 0, 0, 0.1);
 }
 
-img.thumb {
+#tableBody img {
     width: 128px;
     height: 128px;
     object-fit: contain;

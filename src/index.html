@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,9 +8,14 @@
     <link rel="stylesheet" href="/styles.css">
     <!-- ChatGPT -->
 </head>
+
 <body>
     <div class="container">
         <h1>File Server</h1>
+        <!--
+            Meant to be a grid layout, but used table for simplicity of
+            getting started. Will change to grid later.
+        -->
         <table id="fileTable">
             <thead>
                 <tr>
@@ -19,9 +25,22 @@
                 </tr>
             </thead>
             <tbody id="tableBody">
+                <!-- root (/) -->
+                <tr id="rootRow">
+                    <td><img src="/thumbdir" alt="root"></td>
+                    <td><a id="rootRowLink" href="/">/</a></td>
+                    <td></td>
+                </tr>
+                <!-- back (..) -->
+                <tr id="backRow">
+                    <td><img src="/thumbdir" alt="back"></td>
+                    <td><a id="backRowLink" href="#">..</a></td>
+                    <td></td>
+                </tr>
             </tbody>
         </table>
     </div>
     <script src="/scripts.js"></script>
 </body>
+
 </html>
