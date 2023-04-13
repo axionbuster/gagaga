@@ -653,14 +653,8 @@ async fn serve_user_path(
 
     // If it's a regular file, then download it.
     if filemetadata.is_file() {
-        // download the file
-
         // First, let Tokio read it asynchronously.
-        let mut file = tokio::fs::File::open(userpathreal.as_ref())
-            .await
-            .with_context(|| {
-                format!("Cannot open real file path {userpathreal:?}")
-            })?;
+        let mut file = tokio::fs::File::open(userpathreal.as_ref()).await?;
         // Read everything into a Vec<u8>.
         let mut buf = vec![];
         file.read_to_end(&mut buf).await?;
@@ -725,7 +719,7 @@ async fn serve_thumb<const TW: u32, const TH: u32>(
     userpath: axum::extract::Path<String>,
 ) -> domainprim::Result<axum::response::Response> {
     // Domain-specific primitives
-    use crate::domainprim::pathresolve;
+    use crate::domainprim::{pathresolve, UnifiedError::*};
 
     // Caching stuff
     use crate::cachethumb;
@@ -747,9 +741,11 @@ async fn serve_thumb<const TW: u32, const TH: u32>(
         return Ok(serve_svg(SVG_FOLDER).await);
     }
 
-    // If not file, reject. Serve the file icon.
+    // If not file, reject.
     if !filemetadata.is_file() {
-        return Ok(serve_svg(SVG_FILE).await);
+        return Err(NotFound(anyhow::anyhow!(
+            "serve_thumb: neither a file nor a directory"
+        )));
     }
 
     // A file. Generate a thumbnail. If successful, serve it.
