@@ -12,18 +12,43 @@ document.addEventListener('DOMContentLoaded', () => {
         const json = await response.json();
         const files = json.files;
 
+        // Sort files by last modified date, from newest to oldest
         files.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
 
-        // FIXME: Turn this into safer HTML.
-        const rows = files.map(file => `
-            <tr>
-                <td><img class="thumb" src="${file.thumb_url}" loading="lazy"></td>
-                <td><a href="${file.url}">${file.name}</a></td>
-                <td>${new Date(file.last_modified).toLocaleString()}</td>
-            </tr>
-        `).join('');
+        for (const file of files) {
+            // <tr>
+            //  <td><img ... /></td>        (thumbnail)
+            //  <td><a ...>...</a></td>     (name and link)
+            //  <td>...</td>                (last modified)
+            // </tr>
 
-        tableBody.innerHTML = rows;
+            const tr = document.createElement('tr');
+            const td1 = document.createElement('td');
+            const imgThumb = document.createElement('img');
+            imgThumb.classList.add('thumb');
+            imgThumb.src = file.thumb_url;
+            imgThumb.alt = ''; // thumbnail; decorative
+            imgThumb.width = 100;
+            imgThumb.height = 100;
+            imgThumb.loading = 'lazy';
+            imgThumb.style = 'background-image: url(/thumbimg);'
+            // Remove imgThumb.style once loaded (attribute 'complete' is set)
+            imgThumb.onload = () => {
+                imgThumb.removeAttribute('style');
+            };
+            td1.appendChild(imgThumb);
+            tr.appendChild(td1);
+            const td2 = document.createElement('td');
+            const a = document.createElement('a');
+            a.href = file.url;
+            a.textContent = file.name;
+            td2.appendChild(a);
+            tr.appendChild(td2);
+            const td3 = document.createElement('td');
+            td3.textContent = new Date(file.last_modified).toLocaleString();
+            tr.appendChild(td3);
+            tableBody.appendChild(tr);
+        }
     };
 
     toggleTheme.addEventListener('click', () => {

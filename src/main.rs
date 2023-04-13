@@ -718,6 +718,13 @@ async fn serve_svg(svg: &'static str) -> axum::response::Response {
     response.into_response()
 }
 
+/// Serve image loading placeholder PNG file
+#[instrument]
+async fn serve_loading_png() -> &'static [u8] {
+    // Font Awesome: image
+    include_bytes!("image-solid.png")
+}
+
 /// A thumbnail cache, shared between all threads, a channel.
 static CACHEMPSC: OnceCell<cachethumb::Mpsc> = OnceCell::const_new();
 
@@ -941,6 +948,8 @@ async fn main() {
         .route("/thumb/", get(|| async { serve_svg(SVG_FILE).await }))
         .route("/thumbdir", get(|| async { serve_svg(SVG_FOLDER).await }))
         .route("/thumbdir/", get(|| async { serve_svg(SVG_FOLDER).await }))
+        .route("/thumbimg", get(serve_loading_png))
+        .route("/thumbimg/", get(serve_loading_png))
         .route("/thumb/*userpath", get(serve_thumb::<200, 200>))
         .route("/user", get(|| async { serve_index().await }))
         .route("/user/", get(|| async { serve_index().await }))
