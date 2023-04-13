@@ -1,3 +1,5 @@
+//! Serve files from a directory
+
 use std::path::PathBuf;
 
 use anyhow::Context;
@@ -16,6 +18,7 @@ mod domainprim {
         fmt::Display,
         os::unix::prelude::OsStrExt,
         path::{Path, PathBuf},
+        time::SystemTime,
     };
 
     use chrono::TimeZone;
@@ -25,9 +28,9 @@ mod domainprim {
     /// UTC DateTime
     pub type DateTime = chrono::DateTime<chrono::Utc>;
 
-    /// Attempt to convert a SystemTime (returned on file statistics calls)
+    /// Attempt to convert a [`SystemTime`] (returned on file statistics calls)
     /// to the DateTime type. How inconvenient is this?
-    pub fn systime2datetime(t: std::time::SystemTime) -> Option<DateTime> {
+    pub fn systime2datetime(t: SystemTime) -> Option<DateTime> {
         t.duration_since(std::time::UNIX_EPOCH)
             .ok()
             .map(|d| {
@@ -36,7 +39,14 @@ mod domainprim {
             .map(|t| t.single().unwrap())
     }
 
-    /// Unified error type
+    /// Unified error type.
+    ///
+    /// Any time you use [`anyhow::Error`], you can use this type instead.
+    /// It will do an implicit conversion to [`anyhow::Error`] for you
+    /// whenever you use the `?` operator.
+    ///
+    /// The wrapped errors inside are strictly internal. The client will
+    /// not see any messages or details.
     #[derive(Debug, thiserror::Error)]
     pub enum UnifiedError {
         /// 500 Internal Server Error
@@ -60,8 +70,8 @@ mod domainprim {
         }
     }
 
-    // Allow to be rendered as an Axum Response using hard-coded &'static str JSON strings.
     impl axum::response::IntoResponse for UnifiedError {
+        /// Allow to be rendered as an Axum Response using hard-coded &'static str JSON strings.
         fn into_response(self) -> axum::response::Response {
             use http::StatusCode;
 
@@ -84,7 +94,9 @@ mod domainprim {
         }
     }
 
-    /// Unified Result
+    /// Unified Result. You can return this type directly in an
+    /// Axum endpoint handler. It will return valid JSON responses
+    /// when there is an error with the correct status code.
     pub type Result<T> = std::result::Result<T, UnifiedError>;
 
     /// An absolute, resolved file path that was trusted when it was created.
@@ -93,7 +105,12 @@ mod domainprim {
     pub struct ResolvedPath(PathBuf);
 
     impl ResolvedPath {
-        /// Trust a PathBuf with no validation whatsoever
+        /// Trust a PathBuf with no validation whatsoever.
+        ///
+        /// This should be used only when the path is known to be
+        /// absolute and resolved, and is not user input.
+        ///
+        /// Hence, no [`From`] implementation is provided.
         pub fn from_trusted_pathbuf(path: PathBuf) -> ResolvedPath {
             ResolvedPath(path)
         }
@@ -106,10 +123,9 @@ mod domainprim {
         }
     }
 
-    /// Attempt to canonicalize path (`pathuser`) if found.
-    /// Once resolved, compare the canonical
-    /// path to the parent path. If outside, return an error.
-    /// Otherwise, return the absolute, canonicalized path.
+    /// Given a normal, relative path (to the given working directory),
+    /// attempt to canonicalize it by following symlinks and resolving
+    /// paths, producing an absolute path.
     #[instrument(err, level = "debug")]
     pub async fn pathresolve(
         pathuser: &Path,
@@ -141,7 +157,8 @@ mod domainprim {
         Ok(ResolvedPath(path))
     }
 
-    /// A file, directory, or similar objects of interest
+    /// A file, directory, or similar objects of interest as understood
+    /// by the server.
     struct DomainFile {
         /// The file as found on the server, relative to the servicing directory
         pub server_path: PathBuf,
@@ -161,6 +178,17 @@ mod domainprim {
             is_file: Option<bool>,
             custom_thumbnail: bool,
         ) -> Self {
+            // Currently, the file type must be known to be one of
+            // file (Some(true)) or directory (Some(false)).
+            // If I become unaware and introduce a new feature without
+            // updating this, I will get a crash.
+            if is_file.is_none() {
+                todo!(
+                    "In DomainFile::new, is_file is None (unknown type file).
+Currently, only file (Some(true)) or directory (Some(false)) are supported."
+                );
+            }
+
             DomainFile {
                 server_path,
                 last_modified,
@@ -183,8 +211,11 @@ mod domainprim {
         }
     }
 
-    // Seralize DomainFile into JSON
     impl Serialize for DomainFile {
+        /// Note: For certain malformed paths, this may return an empty JSON object.
+        /// See the code for details.
+        ///
+        /// I also don't know if this is the best way to serialize this.
         fn serialize<S: serde::Serializer>(
             &self,
             serializer: S,
@@ -255,13 +286,18 @@ mod domainprim {
     /// A directory listing
     #[derive(Serialize)]
     pub struct DomainDirListing {
+        /// Did this listing get truncated because more than a certain
+        /// number of files were found?
         truncated: bool,
+        /// The files in this directory, once resolved.
         files: Vec<DomainFile>,
+        /// The directories in this directory, once resolved.
         directories: Vec<DomainFile>,
     }
 
     // Return an Axum response using the serialized JSON
     impl axum::response::IntoResponse for DomainDirListing {
+        /// We specifically create a JSON response.
         fn into_response(self) -> axum::response::Response {
             use axum::body::Body;
             use axum::http::{header, HeaderValue, StatusCode};
@@ -472,23 +508,23 @@ mod cachethumb {
     //! order all the cache operations.
     //!
     //! Why do this:
-    //! - The data structure, HashMap, is single threaded, which
+    //! - The data structure, a [`HashMap`], is single threaded, which
     //! requires the serialization of all instructions.
     //! - I find it simpler than having to deal with concurrency
     //! hazards myself in other places than this.
     //! - It's concurrent anyway so it's hard.
     //!
     //! Example:
-    //! - Call spawn_cache_process() to get a channel to the cache manager.
+    //! - Call [`spawn_cache_process()`] to get a channel to the cache manager.
     //! It also spawns it!
-    //! - Compose CacheMessage::Insert(...) to insert a new thumbnail.
+    //! - Compose [`CacheMessage::Insert`] to insert a new thumbnail.
     //! Send it to the channel returned by the previous step.
-    //! - Compose CacheMessage::Get(...) to get a thumbnail. Send it.
+    //! - Compose [`CacheMessage::Get`] to get a thumbnail. Send it.
     //!
     //! For each one of these cases above, respectively, you can use:
     //! - [`spawn_cache_process`]
-    //! - [`ins`]
-    //! - [`xget`]
+    //! - See the methods defined on [`Mpsc`], your primary point of
+    //!   interaction with the cache manager.
 
     use tokio::sync::mpsc;
     use tracing::instrument;
@@ -516,9 +552,9 @@ mod cachethumb {
     /// A message to the cache manager "process" (logical).
     #[derive(Debug)]
     enum CacheMessage {
-        /// Insert a new thumbnail (Vec<u8>) now.
+        /// Insert a new thumbnail (`Vec<u8>`) now.
         Insert(ResolvedPath, Vec<u8>),
-        /// Get a thumbnail (Vec<u8>) now only if fresh.
+        /// Get a thumbnail (`Vec<u8>`) now only if fresh.
         ///
         /// The manager will inspect the file system asynchronously to
         /// determine freshness if necessary.
@@ -529,24 +565,51 @@ mod cachethumb {
     }
 
     /// A channel to the cache manager "process" (logical).
+    ///
+    /// Spawned by [`spawn_cache_process`].
+    ///
+    /// This structure and its two methods are your primary point of
+    /// interaction with the cache manager.
+    ///
+    /// You can use this structure to insert and get thumbnails.
+    ///
+    /// All access to the cache is serialized. In fact, the event
+    /// loop is single threaded.
+    ///
+    /// There's no guarantee that an insertion or a retrieval will
+    /// succeed even under normal circumstances. The message passing
+    /// system (Tokio) may drop the message for any number of
+    /// reasons, though it is convenient in this case.
+    ///
+    /// If a message gets dropped (or the underlying system fails),
+    /// the cache manager may log it and continue. But it also may not
+    /// log it and continue. It's not guaranteed.
     #[derive(Debug)]
     pub struct Mpsc(mpsc::UnboundedSender<CacheMessage>);
 
     impl Mpsc {
-        /// Insert a new thumbnail (Vec<u8>) now.
+        /// Insert a new thumbnail (`Vec<u8>`) now.
         pub fn ins(&self, path: &ResolvedPath, data: Vec<u8>) {
             self.0
                 .send(CacheMessage::Insert(path.clone(), data))
-                .unwrap()
+                // If fail, quietly drop the message.
+                .unwrap_or_default()
         }
 
-        /// Get a thumbnail (Vec<u8>) now only if fresh.
+        /// Get a thumbnail (`Vec<u8>`) now only if fresh.
         ///
-        /// "x" stands for "extra" --- that means be careful about the interactions.
+        /// The manager will inspect the file system asynchronously to
+        /// determine freshness if necessary.
+        ///
+        /// Note on the vocabulary:
+        /// - Fresh: exists and cache is more recent than the file system.
+        /// - Stale: exists but cache is older than the file system.
+        /// - (Neither): missing, does not exist.
         pub async fn get(&self, path: &ResolvedPath) -> Option<CacheResponse> {
             let (tx, rx) = tokio::sync::oneshot::channel();
             self.0.send(CacheMessage::Get(path.clone(), tx)).unwrap();
-            rx.await.unwrap()
+            // flatten: Option<Option<T>> -> Option<T>
+            rx.await.ok().flatten()
         }
     }
 
@@ -637,7 +700,8 @@ mod cachethumb {
 /// The root directory of the server.
 static ROOT: OnceCell<domainprim::ResolvedPath> = OnceCell::const_new();
 
-/// A middleware to resolve the path.
+/// Use as middleware to resolve "the path" (see [`pathresolve`](crate::domainprim::pathresolve))
+/// from the request. Return 404 if the path fails to resolve.
 #[instrument(err, skip(request), fields(path = %userpath.as_ref().map(|x| x.as_str()).unwrap_or("/")))]
 async fn resolve_path<B: std::fmt::Debug>(
     userpath: Option<axum::extract::Path<String>>,
