@@ -72,7 +72,7 @@ impl axum::response::IntoResponse for UnifiedError {
     }
 }
 
-// Allow free conversion of an std::io::Error into a UnifiedError
+// Allow free conversion of an [`std::io::Error`] into a [`UnifiedError`]
 impl From<std::io::Error> for UnifiedError {
     fn from(e: std::io::Error) -> Self {
         UnifiedError::NotFound(anyhow::anyhow!(e))
