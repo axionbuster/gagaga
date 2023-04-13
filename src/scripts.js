@@ -7,16 +7,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let isDarkMode = false;
 
-    const loadData = async () => {
-        const response = await fetch('/root/');
+    // Find the extra path.
+    const getLocation = () => {
+        const url = window.location.pathname;
+        const checkregex = /^\/user/;
+        const where = url.search(checkregex);
+        if (where !== -1) {
+            // Find the extra path.
+            const extra = url.substring(where + 5);
+            if (extra.length > 0) {
+                // Return the extra path.
+                return extra;
+            } else {
+                return '';
+            }
+        } else {
+            // Halt.
+            window.location.pathname = '/user';
+            throw new Error('(gagaga) getLocation: Invalid path');
+        }
+    }
+
+    const loadData = async (extrapath) => {
+        const response = await fetch('/root' + extrapath);
         const json = await response.json();
-        const files = json.files;
-        const directories = json.directories;
+        const files = json.files ? json.files : [];
+        const directories = json.directories ? json.directories : [];
 
         // Sort by last modified date, from newest to oldest
         directories.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
         files.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
 
+        // TODO: Refactor
         for (const directory of directories) {
             // <tr>
             //  <td><img ... /></td>        (thumbnail)
@@ -93,5 +115,6 @@ document.addEventListener('DOMContentLoaded', () => {
         document.body.classList.toggle('dark-mode', isDarkMode);
     });
 
-    loadData();
+    const extrapath = getLocation();
+    loadData(extrapath);
 });

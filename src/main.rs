@@ -211,7 +211,13 @@ mod domainprim {
                 return state.end();
             }
             let rootrelpath = fullpath.unwrap();
-            let url = format!("/root/{}", rootrelpath);
+            // If directory, go to "/user". This allows browsing.
+            // If file, go to "/root". This allows downloading.
+            let url = if self.is_directory() {
+                format!("/user/{}", rootrelpath)
+            } else {
+                format!("/root/{}", rootrelpath)
+            };
 
             // Client's thumbnail URL to view or download
             // Synopsis: if no custom thumbnail, then use "/thumbdir" for directories
@@ -1018,9 +1024,10 @@ async fn main() {
                 .route("/root/*userpath", get(serve_root))
                 // Special route for dynamic thumbnails
                 .route("/thumb/*userpath", get(serve_thumb::<_, 200, 200>))
+                // Browse
+                .route("/user/*userpath", get(serve_index)) // ignore userpath
                 .layer(map_request(resolve_path)),
         )
-        // basic logging
         .layer(TraceLayer::new_for_http());
 
     // Start server, listening on port 3000
