@@ -478,6 +478,22 @@ mod cachethumb {
 
     use std::collections::HashMap;
 
+    /// Thumbnail with its last modified time.
+    ///
+    /// Useful for HTTP caching.
+    #[derive(Debug)]
+    pub struct CacheResponse {
+        /// Last-Modified.
+        ///
+        /// (If caching works, must exist.)
+        pub lastmod: DateTime,
+
+        /// Thumbnail, JPEG.
+        ///
+        /// You can send this directly to the client.
+        pub thumbnail: Vec<u8>,
+    }
+
     /// A message to the cache manager "process" (logical).
     #[derive(Debug)]
     enum CacheMessage {
@@ -487,7 +503,10 @@ mod cachethumb {
         ///
         /// The manager will inspect the file system asynchronously to
         /// determine freshness if necessary.
-        Get(ResolvedPath, tokio::sync::oneshot::Sender<Option<Vec<u8>>>),
+        Get(
+            ResolvedPath,
+            tokio::sync::oneshot::Sender<Option<CacheResponse>>,
+        ),
     }
 
     /// A channel to the cache manager "process" (logical).
@@ -561,7 +580,12 @@ mod cachethumb {
                         } else {
                             // Fresh
                             tracing::debug!("Get {path:?} was fresh");
-                            reply_to.send(Some(data.clone())).unwrap();
+                            reply_to
+                                .send(Some(CacheResponse {
+                                    lastmod: clastmod,
+                                    thumbnail: data.clone(),
+                                }))
+                                .unwrap();
                         }
 
                         continue;
@@ -582,7 +606,10 @@ mod cachethumb {
     /// Get a thumbnail (Vec<u8>) now only if fresh.
     ///
     /// "x" stands for "extra" --- that means be careful about the interactions.
-    pub async fn xget(path: &ResolvedPath, chan: &Mpsc) -> Option<Vec<u8>> {
+    pub async fn xget(
+        path: &ResolvedPath,
+        chan: &Mpsc,
+    ) -> Option<CacheResponse> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         chan.0.send(CacheMessage::Get(path.clone(), tx)).unwrap();
         rx.await.unwrap()
@@ -694,6 +721,7 @@ static CACHEMPSC: OnceCell<cachethumb::Mpsc> = OnceCell::const_new();
 /// Preserve aspect ratio while fitting in TWxTH.
 #[instrument]
 async fn serve_thumb<const TW: u32, const TH: u32>(
+    headers: axum::http::HeaderMap,
     userpath: axum::extract::Path<String>,
 ) -> domainprim::Result<axum::response::Response> {
     // Domain-specific primitives
@@ -730,7 +758,36 @@ async fn serve_thumb<const TW: u32, const TH: u32>(
     // See if we got a fresh one.
     let thumb_recall =
         cachethumb::xget(&userpathreal, CACHEMPSC.get().unwrap()).await;
-    let thumb: Vec<u8> = match thumb_recall {
+
+    if headers.contains_key(axum::http::header::IF_MODIFIED_SINCE)
+        && thumb_recall.is_some()
+    {
+        // Decide if we should send a 304 Not Modified.
+        let clastmod = &thumb_recall.as_ref().unwrap().lastmod;
+        let ulastmod = headers.get(axum::http::header::IF_MODIFIED_SINCE);
+        if ulastmod.is_some() {
+            // Still deciding...
+            let ulastmod = ulastmod.unwrap().to_str();
+            if ulastmod.is_ok() {
+                // Still deciding...
+                let ulastmod = ulastmod.unwrap();
+                let ulastmod =
+                    chrono::DateTime::parse_from_rfc2822(ulastmod).unwrap();
+                let send = clastmod > &ulastmod;
+
+                if send {
+                    let response = axum::response::Response::builder()
+                        .status(304)
+                        .body(axum::body::Body::empty())
+                        .context("thumb send 303 make response")
+                        .unwrap();
+                    return Ok(response.into_response());
+                }
+            }
+        }
+    }
+
+    let thumb = match thumb_recall {
         // Fresh
         Some(thumb) => thumb,
         // Stale or nonexistent
@@ -739,20 +796,32 @@ async fn serve_thumb<const TW: u32, const TH: u32>(
             let thumb = match gen_thumb::<TW, TH>(&userpathreal).await {
                 Ok(value) => value,
                 // Quietly ignore errors in this step.
-                Err(_value) => return Ok(serve_svg(SVG_FILE).await),
+                Err(e) => {
+                    tracing::warn!(
+                        "thumb gen error (ignored, sent generic): {e}"
+                    );
+                    return Ok(serve_svg(SVG_FILE).await);
+                }
             };
             // Send the thumbnail to the cache.
+            // FIXME: add last modified.
             cachethumb::ins(
                 &userpathreal,
                 thumb.clone(),
                 CACHEMPSC.get().unwrap(),
             );
-            thumb
+            cachethumb::CacheResponse {
+                lastmod: chrono::Utc::now(),
+                thumbnail: thumb,
+            }
         }
     };
+
     let response = axum::response::Response::builder()
         .header("Content-Type", "image/jpeg")
-        .body(axum::body::Body::from(thumb))
+        .header("Cache-Control", "public, no-cache")
+        .header("Last-Modified", thumb.lastmod.to_rfc2822())
+        .body(axum::body::Body::from(thumb.thumbnail))
         .context("thumb jpeg send make response")?
         .into_response();
     Ok(response)
