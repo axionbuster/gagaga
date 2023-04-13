@@ -615,7 +615,7 @@ mod cachethumb {
 
     /// A cache manager "process" (logical). It's defined by an implicit
     /// main loop, and it's not a real OS process. But whatever.
-    /// For each message, use a one shot channel to communicate.
+    /// See [`Mpsc`] for how to communicate.
     #[instrument]
     pub fn spawn_cache_process() -> Mpsc {
         // Define the main loop and spawn it, too.
