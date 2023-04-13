@@ -97,9 +97,12 @@ async fn serve_root<B: std::fmt::Debug>(
         // Read everything into a Vec<u8>.
         let mut buf = vec![];
         file.read_to_end(&mut buf).await?;
+        // Guess MIME type by their extension.
+        // If can't, say, application/octet-stream.
+        let mime = mime_guess::from_path(userpathreal.as_ref()).first_or_octet_stream();
         // Axum: make a response.
         let response = axum::response::Response::builder()
-            .header("Content-Type", "application/octet-stream")
+            .header("Content-Type", mime.to_string())
             .body(axum::body::Body::from(buf))
             .context("file send make response")?;
         let response = response.into_response();
