@@ -67,7 +67,7 @@ async fn serve_root<B: std::fmt::Debug>(
     request: axum::http::Request<B>,
 ) -> domainprim::Result<axum::response::Response> {
     // Domain-specific primitives
-    use crate::domainprim::{dirlist, UnifiedError::*};
+    use crate::domainprim::{dirlistjson, UnifiedError::*};
 
     // Get the resolved path from the request.
     let userpathreal = request
@@ -115,17 +115,13 @@ async fn serve_root<B: std::fmt::Debug>(
     }
 
     // A directory. List it with a limit of 3000 files.
-    let list = dirlist::<3000>(
+    dirlistjson::<3000>(
         // path (user's control)
         &userpathreal,
         // don't go outside of the root directory (server's control)
         ROOT.get().unwrap(),
     )
-    .await?;
-
-    let response = list.into_response();
-
-    Ok(response)
+    .await
 }
 
 /// SVG Icon for folder, Font Awesome.

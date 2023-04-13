@@ -6,6 +6,7 @@ use std::{
     time::SystemTime,
 };
 
+use axum::response::IntoResponse;
 use chrono::TimeZone;
 use serde::{ser::SerializeMap, Serialize};
 use tracing::instrument;
@@ -146,9 +147,9 @@ pub async fn pathresolve(
 /// by the server.
 struct DomainFile {
     /// The file as found on the server, relative to the servicing directory
-    pub server_path: PathBuf,
+    server_path: PathBuf,
     /// Metadata: last modified time, if available
-    pub last_modified: Option<DateTime>,
+    last_modified: Option<DateTime>,
     /// Metadata: type of file:
     /// bit 0-1: 0 = unknown, 1 = file, 2 = directory
     /// bit 2: 0 = default thumbnail, 1 = custom thumbnail
@@ -270,7 +271,7 @@ impl Serialize for DomainFile {
 
 /// A directory listing
 #[derive(Serialize)]
-pub struct DomainDirListing {
+struct DomainDirListing {
     /// Did this listing get truncated because more than a certain
     /// number of files were found?
     truncated: bool,
@@ -314,7 +315,7 @@ impl axum::response::IntoResponse for DomainDirListing {
 /// A hard-coded limit of N entries apply. If the limit is reached,
 /// then the limit_reached flag is set to true.
 #[instrument(err)]
-pub async fn dirlist<const N: usize>(
+async fn dirlist<const N: usize>(
     path: &ResolvedPath,
     parent_path: &ResolvedPath,
 ) -> Result<DomainDirListing> {
@@ -430,6 +431,15 @@ pub async fn dirlist<const N: usize>(
         .sort_unstable_by(|a, b| b.last_modified.cmp(&a.last_modified));
 
     Ok(domaindir)
+}
+
+/// Produce a JSON response from the directory listing that can be
+/// consumed by the frontend, in Axum style.
+pub async fn dirlistjson<const N: usize>(
+    path: &ResolvedPath,
+    parent_path: &ResolvedPath,
+) -> Result<axum::response::Response> {
+    Ok(dirlist::<N>(path, parent_path).await?.into_response())
 }
 
 /// By looking at the extension of a &Path only, heuristically decide whether
