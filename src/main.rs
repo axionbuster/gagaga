@@ -115,10 +115,12 @@ mod domainprim {
         workdir: &ResolvedPath,
     ) -> Result<ResolvedPath> {
         // Do a quick check to see if the path is "normal"
-        if !pathuser
-            .components()
-            .all(|c| matches!(c, std::path::Component::Normal(_)))
-        {
+        if !pathuser.components().all(|c| {
+            matches!(
+                c,
+                std::path::Component::Normal(_) | std::path::Component::RootDir
+            )
+        }) {
             return Err(UnifiedError::NotFound(anyhow::anyhow!(
                 "Path {pathuser:?} is not a normal path"
             )));
