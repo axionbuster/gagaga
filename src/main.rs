@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use axum::{
+    middleware::map_response,
     response::{IntoResponse, Redirect},
     routing::get,
     Router,
@@ -725,6 +726,18 @@ async fn serve_loading_png() -> &'static [u8] {
     include_bytes!("image-solid.png")
 }
 
+/// Add static assets caching with public, max-age=(1 hour).
+#[instrument]
+async fn add_static_cache_control(
+    mut response: axum::response::Response,
+) -> axum::response::Response {
+    response.headers_mut().insert(
+        "Cache-Control",
+        axum::http::HeaderValue::from_static("public, max-age=3600"),
+    );
+    response
+}
+
 /// A thumbnail cache, shared between all threads, a channel.
 static CACHEMPSC: OnceCell<cachethumb::Mpsc> = OnceCell::const_new();
 
@@ -944,17 +957,28 @@ async fn main() {
         .route("/root", get(|| async { serve_root(None).await }))
         .route("/root/", get(|| async { serve_root(None).await }))
         .route("/root/*userpath", get(serve_root))
-        .route("/thumb", get(|| async { serve_svg(SVG_FILE).await }))
-        .route("/thumb/", get(|| async { serve_svg(SVG_FILE).await }))
-        .route("/thumbdir", get(|| async { serve_svg(SVG_FOLDER).await }))
-        .route("/thumbdir/", get(|| async { serve_svg(SVG_FOLDER).await }))
-        .route("/thumbimg", get(serve_loading_png))
-        .route("/thumbimg/", get(serve_loading_png))
-        .route("/thumb/*userpath", get(serve_thumb::<200, 200>))
         .route("/user", get(|| async { serve_index().await }))
         .route("/user/", get(|| async { serve_index().await }))
-        .route("/styles.css", get(|| async { serve_styles().await }))
-        .route("/scripts.js", get(|| async { serve_scripts().await }))
+        .merge(
+            // Static assets
+            Router::new()
+                .route("/thumb", get(|| async { serve_svg(SVG_FILE).await }))
+                .route("/thumb/", get(|| async { serve_svg(SVG_FILE).await }))
+                .route(
+                    "/thumbdir",
+                    get(|| async { serve_svg(SVG_FOLDER).await }),
+                )
+                .route(
+                    "/thumbdir/",
+                    get(|| async { serve_svg(SVG_FOLDER).await }),
+                )
+                .route("/thumbimg", get(serve_loading_png))
+                .route("/thumbimg/", get(serve_loading_png))
+                .route("/styles.css", get(|| async { serve_styles().await }))
+                .route("/scripts.js", get(|| async { serve_scripts().await }))
+                .layer(map_response(add_static_cache_control)),
+        )
+        .route("/thumb/*userpath", get(serve_thumb::<200, 200>))
         .layer(TraceLayer::new_for_http());
 
     // Start server, listening on port 3000
