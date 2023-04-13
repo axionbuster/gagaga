@@ -15,6 +15,11 @@ document.addEventListener('DOMContentLoaded', () => {
             // Find the extra path component that follows '/user'.
             const extra = url.substring(where + 5);
             extraPath = extra;
+
+            // If empty, then '/'.
+            if (extraPath === '') {
+                extraPath = '/';
+            }
         } else {
             // Redirect (soft).
             window.location.pathname = '/user';
@@ -23,8 +28,16 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    // Set the title and h1
+    {
+        const text = `File Server (${extraPath})`;
+        document.title = text;
+        const h1 = document.getElementsByTagName('h1')[0];
+        h1.textContent = text;
+    }
+
     // Disable the back (..) row if and only if we are at the root.
-    if (extraPath === '' || extraPath === '/') {
+    if (extraPath === '/') {
         const backRow = document.getElementById('backRow');
         backRow.style = 'display: none;';
     } else {
@@ -33,7 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Do the same with the root (/) row button.
-    if (extraPath === '' || extraPath === '/') {
+    if (extraPath === '/') {
         const rootRow = document.getElementById('rootRow');
         rootRow.style = 'display: none;';
     } else {
