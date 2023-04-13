@@ -124,18 +124,23 @@ async fn serve_root<B: std::fmt::Debug>(
     .await
 }
 
-/// SVG Icon for folder, Font Awesome.
-const SVG_FOLDER: &str = include_str!("folder-solid.svg");
-
-/// SVG Icon for file, Font Awesome.
-const SVG_FILE: &str = include_str!("file-solid.svg");
-
-/// Serve a static SVG file
+/// Serve SVG File Icon (Font Awesome)
 #[instrument]
-async fn serve_svg(svg: &'static str) -> axum::response::Response {
+async fn serve_svg_file_icon() -> axum::response::Response {
     let response = axum::response::Response::builder()
         .header("Content-Type", "image/svg+xml")
-        .body(axum::body::Body::from(svg))
+        .body(axum::body::Body::from(include_str!("file-solid.svg")))
+        .context("svg send make response")
+        .unwrap();
+    response.into_response()
+}
+
+/// Serve SVG Folder Icon (Font Awesome)
+#[instrument]
+async fn serve_svg_folder_icon() -> axum::response::Response {
+    let response = axum::response::Response::builder()
+        .header("Content-Type", "image/svg+xml")
+        .body(axum::body::Body::from(include_str!("folder-solid.svg")))
         .context("svg send make response")
         .unwrap();
     response.into_response()
@@ -189,13 +194,13 @@ async fn serve_thumb<B: std::fmt::Debug, const TW: u32, const TH: u32>(
 
     // If the metadata could not be fetched, then serve the file icon.
     if filemetadata.is_none() {
-        return Ok(serve_svg(SVG_FILE).await);
+        return Ok(serve_svg_file_icon().await);
     }
     let filemetadata = filemetadata.unwrap();
 
     // If directory, then serve the folder icon.
     if filemetadata.is_dir() {
-        return Ok(serve_svg(SVG_FOLDER).await);
+        return Ok(serve_svg_folder_icon().await);
     }
 
     // If not file, reject.
@@ -254,7 +259,7 @@ async fn serve_thumb<B: std::fmt::Debug, const TW: u32, const TH: u32>(
                     tracing::warn!(
                         "thumb gen error (ignored, sent generic): {e}"
                     );
-                    return Ok(serve_svg(SVG_FILE).await);
+                    return Ok(serve_svg_file_icon().await);
                 }
             };
             // Send the thumbnail to the cache.
@@ -379,16 +384,10 @@ async fn main() {
             Router::new()
                 .route("/user", get(serve_index))
                 .route("/user/", get(serve_index))
-                .route("/thumb", get(|| async { serve_svg(SVG_FILE).await }))
-                .route("/thumb/", get(|| async { serve_svg(SVG_FILE).await }))
-                .route(
-                    "/thumbdir",
-                    get(|| async { serve_svg(SVG_FOLDER).await }),
-                )
-                .route(
-                    "/thumbdir/",
-                    get(|| async { serve_svg(SVG_FOLDER).await }),
-                )
+                .route("/thumb", get(serve_svg_file_icon))
+                .route("/thumb/", get(serve_svg_file_icon))
+                .route("/thumbdir", get(serve_svg_folder_icon))
+                .route("/thumbdir/", get(serve_svg_folder_icon))
                 .route("/thumbimg", get(serve_loading_png))
                 .route("/thumbimg/", get(serve_loading_png))
                 .route("/styles.css", get(serve_styles))
