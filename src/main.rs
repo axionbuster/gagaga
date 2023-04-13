@@ -109,11 +109,21 @@ mod domainprim {
     /// Once resolved, compare the canonical
     /// path to the parent path. If outside, return an error.
     /// Otherwise, return the absolute, canonicalized path.
-    #[instrument(err)]
+    #[instrument(err, level = "debug")]
     pub async fn pathresolve(
         pathuser: &Path,
         workdir: &ResolvedPath,
     ) -> Result<ResolvedPath> {
+        // Do a quick check to see if the path is "normal"
+        if !pathuser
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
+            return Err(UnifiedError::NotFound(anyhow::anyhow!(
+                "Path {pathuser:?} is not a normal path"
+            )));
+        }
+
         // Ask Tokio to resolve the path asynchronously
         let meantpath = workdir.as_ref().join(pathuser);
         let path = tokio::fs::canonicalize(meantpath).await?;
@@ -622,7 +632,7 @@ static ROOT: OnceCell<domainprim::ResolvedPath> = OnceCell::const_new();
 /// Serve a file or directory, downloading if a regular file,
 /// or listing if a directory.
 #[instrument(err)]
-async fn serve_user_path(
+async fn serve_root(
     userpath: Option<axum::extract::Path<String>>,
 ) -> domainprim::Result<axum::response::Response> {
     // Domain-specific primitives
@@ -922,9 +932,9 @@ async fn main() {
     // Build app
     let app = Router::new()
         .route("/", get(|| async { Redirect::permanent("/user") }))
-        .route("/root", get(|| async { serve_user_path(None).await }))
-        .route("/root/", get(|| async { serve_user_path(None).await }))
-        .route("/root/*userpath", get(serve_user_path))
+        .route("/root", get(|| async { serve_root(None).await }))
+        .route("/root/", get(|| async { serve_root(None).await }))
+        .route("/root/*userpath", get(serve_root))
         .route("/thumb", get(|| async { serve_svg(SVG_FILE).await }))
         .route("/thumb/", get(|| async { serve_svg(SVG_FILE).await }))
         .route("/thumbdir", get(|| async { serve_svg(SVG_FOLDER).await }))
