@@ -5,6 +5,7 @@
     --text-color: black;
 }
 
+/* Inactivated */
 body.dark-mode {
     --bg-color: #1e1e1e;
     --text-color: white;

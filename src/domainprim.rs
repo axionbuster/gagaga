@@ -272,6 +272,16 @@ impl Serialize for DomainFile {
 /// A directory listing
 #[derive(Serialize)]
 struct DomainDirListing {
+    /// A dumb way to think about API versioning.
+    ///
+    /// Basically, three digits. The first digit is the major version.
+    /// The second digit is the minor version. The third digit is the
+    /// patch version.
+    ///
+    /// - Example: "010" means version 0.1.0.
+    /// - Another: "100" means version 1.0.0.
+    /// - Yet another: "123" means version 1.2.3.
+    version: &'static str,
     /// Did this listing get truncated because more than a certain
     /// number of files were found?
     truncated: bool,
@@ -320,6 +330,9 @@ async fn dirlist<const N: usize>(
     parent_path: &ResolvedPath,
 ) -> Result<DomainDirListing> {
     let mut domaindir = DomainDirListing {
+        // FIXME: Hard-coded API version
+        // FIXME: Dumb way to do API versioning
+        version: "010",
         files: Vec::new(),
         directories: Vec::new(),
         truncated: false,
