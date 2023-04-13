@@ -632,12 +632,15 @@ mod cachethumb {
 static ROOT: OnceCell<domainprim::ResolvedPath> = OnceCell::const_new();
 
 /// A middleware to resolve the path.
-async fn resolve_path<B>(
+#[instrument(err, skip(request), fields(path = %userpath.as_ref().map(|x| x.as_str()).unwrap_or("/")))]
+async fn resolve_path<B: std::fmt::Debug>(
     userpath: Option<axum::extract::Path<String>>,
     mut request: axum::http::Request<B>,
 ) -> domainprim::Result<axum::http::Request<B>> {
     // Domain-specific primitives
-    use crate::domainprim::pathresolve;
+    use crate::domainprim::{pathresolve, ResolvedPath};
+
+    use std::fs::Metadata;
 
     let rootdir = ROOT.get().unwrap();
 
@@ -653,13 +656,16 @@ async fn resolve_path<B>(
             PathBuf::from(userpath)
         }
     };
+    tracing::trace!("Calc path: {user:?}");
 
     // Resolve the path (convert to absolute, normalize, etc.)
-    let resolved = pathresolve(&user, rootdir).await?;
-    request.extensions_mut().insert(resolved);
+    let resolved: ResolvedPath = pathresolve(&user, rootdir).await?;
+    tracing::trace!("Resolved path: {:?}", resolved);
+    request.extensions_mut().insert(resolved.clone());
 
     // Find the metadata, too, by running fstat (or equivalent).
-    let metadata = tokio::fs::metadata(user).await?;
+    let metadata: Option<Metadata> = tokio::fs::metadata(resolved).await.ok();
+    tracing::trace!("Metadata: {:?}", metadata);
     request.extensions_mut().insert(metadata);
 
     Ok(request)
@@ -667,7 +673,8 @@ async fn resolve_path<B>(
 
 /// Serve a file or directory, downloading if a regular file,
 /// or listing if a directory.
-async fn serve_root<B>(
+#[instrument(err, skip(request))]
+async fn serve_root<B: std::fmt::Debug>(
     request: axum::http::Request<B>,
 ) -> domainprim::Result<axum::response::Response> {
     // Domain-specific primitives
@@ -681,9 +688,18 @@ async fn serve_root<B>(
         .clone();
     let filemetadata = request
         .extensions()
-        .get::<std::fs::Metadata>()
+        .get::<Option<std::fs::Metadata>>()
         .unwrap()
         .clone();
+
+    // If the metadata could not be fetched, then, say, not found.
+    if filemetadata.is_none() {
+        return Err(NotFound(anyhow::anyhow!(
+            "metadata for {:?} could not be fetched",
+            userpathreal
+        )));
+    }
+    let filemetadata = filemetadata.unwrap();
 
     // If it's a regular file, then download it.
     if filemetadata.is_file() {
@@ -766,7 +782,8 @@ static CACHEMPSC: OnceCell<cachethumb::Mpsc> = OnceCell::const_new();
 /// If the thumbnail is not available, then serve a default thumbnail.
 ///
 /// Preserve aspect ratio while fitting in TWxTH.
-async fn serve_thumb<B, const TW: u32, const TH: u32>(
+#[instrument(err)]
+async fn serve_thumb<B: std::fmt::Debug, const TW: u32, const TH: u32>(
     headers: axum::http::HeaderMap,
     request: axum::http::Request<B>,
 ) -> domainprim::Result<axum::response::Response> {
@@ -781,9 +798,15 @@ async fn serve_thumb<B, const TW: u32, const TH: u32>(
         .clone();
     let filemetadata = request
         .extensions()
-        .get::<std::fs::Metadata>()
+        .get::<Option<std::fs::Metadata>>()
         .unwrap()
         .clone();
+
+    // If the metadata could not be fetched, then serve the file icon.
+    if filemetadata.is_none() {
+        return Ok(serve_svg(SVG_FILE).await);
+    }
+    let filemetadata = filemetadata.unwrap();
 
     // If directory, then serve the folder icon.
     if filemetadata.is_dir() {
