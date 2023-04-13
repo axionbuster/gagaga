@@ -360,7 +360,10 @@ async fn main() {
     let root = if args.len() < 2 {
         // Let the user know that the program expects a path to the root directory.
         // Still, we will use the current directory as the root directory.
-        tracing::info!("No root directory specified. Using current directory. Usage: ./(program) (root directory)");
+        tracing::info!(
+            "No root directory specified. Using current directory. \
+Usage: ./(program) (root directory)"
+        );
         std::env::current_dir().unwrap()
     } else {
         tracing::info!("Root directory specified: {arg:?}", arg = &args[1]);

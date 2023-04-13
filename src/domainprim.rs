@@ -136,7 +136,8 @@ pub async fn pathresolve(
     // Decide whether the resolved path is a subpath of the parent
     if !path.starts_with(workdir.as_ref()) {
         return Err(UnifiedError::NotFound(anyhow::anyhow!(
-            "Path {path:?} is not a subpath of the working directory {workdir:?}"
+            "Path {path:?} is not a subpath of the working \
+directory {workdir:?}"
         )));
     }
 
@@ -170,7 +171,7 @@ impl DomainFile {
         // updating this, I will get a crash.
         if is_file.is_none() {
             todo!(
-                "In DomainFile::new, is_file is None (unknown type file).
+                "In DomainFile::new, is_file is None (unknown type file). \
 Currently, only file (Some(true)) or directory (Some(false)) are supported."
             );
         }
@@ -386,7 +387,10 @@ async fn dirlist<const N: usize>(
             // then just skip this entry.
             // Though, I gotta say, that would be pretty weird.
             // Let's log that.
-            tracing::warn!("Could not strip prefix in path: {path:?}; That's weird. Ignoring directory entry.");
+            tracing::warn!(
+                "Could not strip prefix in path: {path:?}; \
+That's weird. Ignoring directory entry."
+            );
             continue;
         }
         let server_path = server_path.unwrap();
