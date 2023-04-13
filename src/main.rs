@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use axum::{
-    middleware::map_response,
+    middleware::{map_request, map_response},
     response::{IntoResponse, Redirect},
     routing::get,
     Router,
@@ -526,6 +526,24 @@ mod cachethumb {
     #[derive(Debug)]
     pub struct Mpsc(mpsc::UnboundedSender<CacheMessage>);
 
+    impl Mpsc {
+        /// Insert a new thumbnail (Vec<u8>) now.
+        pub fn ins(&self, path: &ResolvedPath, data: Vec<u8>) {
+            self.0
+                .send(CacheMessage::Insert(path.clone(), data))
+                .unwrap()
+        }
+
+        /// Get a thumbnail (Vec<u8>) now only if fresh.
+        ///
+        /// "x" stands for "extra" --- that means be careful about the interactions.
+        pub async fn get(&self, path: &ResolvedPath) -> Option<CacheResponse> {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            self.0.send(CacheMessage::Get(path.clone(), tx)).unwrap();
+            rx.await.unwrap()
+        }
+    }
+
     /// A cache manager "process" (logical). It's defined by an implicit
     /// main loop, and it's not a real OS process. But whatever.
     /// For each message, use a one shot channel to communicate.
@@ -541,7 +559,7 @@ mod cachethumb {
             while let Some(msg) = rx.recv().await {
                 match msg {
                     CacheMessage::Insert(path, data) => {
-                        tracing::debug!("Got insert");
+                        tracing::trace!("Got insert");
                         let now = chrono::Utc::now();
                         cache.insert(path, (now, data));
                     }
@@ -551,7 +569,7 @@ mod cachethumb {
                         // Otherwise, send None back to (reply_to).
 
                         if !cache.contains_key(&path) {
-                            tracing::debug!("Get {path:?} was not in cache");
+                            tracing::trace!("Get {path:?} was not in cache");
                             reply_to.send(None).unwrap();
                             continue;
                         }
@@ -586,13 +604,13 @@ mod cachethumb {
                         // Decide.
                         if flastmod > clastmod {
                             // Stale
-                            tracing::debug!(
+                            tracing::trace!(
                                 "Get {path:?} was stale (fs > cache)"
                             );
                             reply_to.send(None).unwrap();
                         } else {
                             // Fresh
-                            tracing::debug!("Get {path:?} was fresh");
+                            tracing::trace!("Get {path:?} was fresh");
                             reply_to
                                 .send(Some(CacheResponse {
                                     lastmod: clastmod,
@@ -608,38 +626,18 @@ mod cachethumb {
         });
         Mpsc(tx)
     }
-
-    /// Insert a new thumbnail (Vec<u8>) now.
-    pub fn ins(path: &ResolvedPath, data: Vec<u8>, chan: &Mpsc) {
-        chan.0
-            .send(CacheMessage::Insert(path.clone(), data))
-            .unwrap()
-    }
-
-    /// Get a thumbnail (Vec<u8>) now only if fresh.
-    ///
-    /// "x" stands for "extra" --- that means be careful about the interactions.
-    pub async fn xget(
-        path: &ResolvedPath,
-        chan: &Mpsc,
-    ) -> Option<CacheResponse> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        chan.0.send(CacheMessage::Get(path.clone(), tx)).unwrap();
-        rx.await.unwrap()
-    }
 }
 
 /// The root directory of the server.
 static ROOT: OnceCell<domainprim::ResolvedPath> = OnceCell::const_new();
 
-/// Serve a file or directory, downloading if a regular file,
-/// or listing if a directory.
-#[instrument(err)]
-async fn serve_root(
+/// A middleware to resolve the path.
+async fn resolve_path<B>(
     userpath: Option<axum::extract::Path<String>>,
-) -> domainprim::Result<axum::response::Response> {
+    mut request: axum::http::Request<B>,
+) -> domainprim::Result<axum::http::Request<B>> {
     // Domain-specific primitives
-    use crate::domainprim::{dirlist, pathresolve, UnifiedError::*};
+    use crate::domainprim::pathresolve;
 
     let rootdir = ROOT.get().unwrap();
 
@@ -656,13 +654,36 @@ async fn serve_root(
         }
     };
 
-    // Resolve the path (convert user's path to server's absolute path, as well as
-    // following symlinks and all that). Note: according to the contract of
-    // ResolvedPath, it's guaranteed to be absolute and within the root directory.
-    let userpathreal = pathresolve(&user, rootdir).await?;
+    // Resolve the path (convert to absolute, normalize, etc.)
+    let resolved = pathresolve(&user, rootdir).await?;
+    request.extensions_mut().insert(resolved);
 
-    // Check if the path points to a directory or a file.
-    let filemetadata = userpathreal.as_ref().metadata()?;
+    // Find the metadata, too, by running fstat (or equivalent).
+    let metadata = tokio::fs::metadata(user).await?;
+    request.extensions_mut().insert(metadata);
+
+    Ok(request)
+}
+
+/// Serve a file or directory, downloading if a regular file,
+/// or listing if a directory.
+async fn serve_root<B>(
+    request: axum::http::Request<B>,
+) -> domainprim::Result<axum::response::Response> {
+    // Domain-specific primitives
+    use crate::domainprim::{dirlist, UnifiedError::*};
+
+    // Get the resolved path from the request.
+    let userpathreal = request
+        .extensions()
+        .get::<domainprim::ResolvedPath>()
+        .unwrap()
+        .clone();
+    let filemetadata = request
+        .extensions()
+        .get::<std::fs::Metadata>()
+        .unwrap()
+        .clone();
 
     // If it's a regular file, then download it.
     if filemetadata.is_file() {
@@ -693,7 +714,7 @@ async fn serve_root(
         // path (user's control)
         &userpathreal,
         // don't go outside of the root directory (server's control)
-        rootdir,
+        ROOT.get().unwrap(),
     )
     .await?;
 
@@ -745,28 +766,24 @@ static CACHEMPSC: OnceCell<cachethumb::Mpsc> = OnceCell::const_new();
 /// If the thumbnail is not available, then serve a default thumbnail.
 ///
 /// Preserve aspect ratio while fitting in TWxTH.
-#[instrument]
-async fn serve_thumb<const TW: u32, const TH: u32>(
+async fn serve_thumb<B, const TW: u32, const TH: u32>(
     headers: axum::http::HeaderMap,
-    userpath: axum::extract::Path<String>,
+    request: axum::http::Request<B>,
 ) -> domainprim::Result<axum::response::Response> {
     // Domain-specific primitives
-    use crate::domainprim::{pathresolve, UnifiedError::*};
+    use crate::domainprim::UnifiedError::*;
 
-    // Caching stuff
-    use crate::cachethumb;
-
-    let rootdir = ROOT.get().unwrap();
-
-    let user = PathBuf::from(userpath.as_str());
-
-    // Resolve the path (convert user's path to server's absolute path, as well as
-    // following symlinks and all that). Note: according to the contract of
-    // ResolvedPath, it's guaranteed to be absolute and within the root directory.
-    let userpathreal = pathresolve(&user, rootdir).await?;
-
-    // Check if the path points to a directory or a file.
-    let filemetadata = userpathreal.as_ref().metadata()?;
+    // Get the resolved path & metadata from the request.
+    let userpathreal = request
+        .extensions()
+        .get::<domainprim::ResolvedPath>()
+        .unwrap()
+        .clone();
+    let filemetadata = request
+        .extensions()
+        .get::<std::fs::Metadata>()
+        .unwrap()
+        .clone();
 
     // If directory, then serve the folder icon.
     if filemetadata.is_dir() {
@@ -784,9 +801,10 @@ async fn serve_thumb<const TW: u32, const TH: u32>(
     // Otherwise, serve the file icon.
 
     // See if we got a fresh one.
-    let thumb_recall =
-        cachethumb::xget(&userpathreal, CACHEMPSC.get().unwrap()).await;
+    let cache = CACHEMPSC.get().unwrap();
+    let thumb_recall = cache.get(&userpathreal).await;
 
+    // TODO: Refactor. What is this?
     if headers.contains_key(axum::http::header::IF_MODIFIED_SINCE)
         && thumb_recall.is_some()
     {
@@ -832,12 +850,7 @@ async fn serve_thumb<const TW: u32, const TH: u32>(
                 }
             };
             // Send the thumbnail to the cache.
-            // FIXME: add last modified.
-            cachethumb::ins(
-                &userpathreal,
-                thumb.clone(),
-                CACHEMPSC.get().unwrap(),
-            );
+            cache.ins(&userpathreal, thumb.clone());
             cachethumb::CacheResponse {
                 lastmod: chrono::Utc::now(),
                 thumbnail: thumb,
@@ -885,30 +898,29 @@ async fn gen_thumb<const TW: u32, const TH: u32>(
 /// Serve the index page.
 #[instrument]
 async fn serve_index() -> axum::response::Html<&'static str> {
-    const INDEX_HTML: &str = include_str!("index.html");
-    axum::response::Html(INDEX_HTML)
+    axum::response::Html(include_str!("index.html"))
 }
 
 /// Serve styles.css.
 #[instrument]
-async fn serve_styles() -> domainprim::Result<axum::response::Response> {
-    const STYLES_CSS: &str = include_str!("styles.css");
-    let response = axum::response::Response::builder()
+async fn serve_styles() -> axum::response::Response {
+    axum::response::Response::builder()
         .header("Content-Type", "text/css")
-        .body(axum::body::Body::from(STYLES_CSS))
-        .context("styles send make response")?;
-    Ok(response.into_response())
+        .body(axum::body::Body::from(include_str!("styles.css")))
+        .context("serve_styles: make response")
+        .unwrap()
+        .into_response()
 }
 
 /// Serve scripts.js
 #[instrument]
-async fn serve_scripts() -> domainprim::Result<axum::response::Response> {
-    const SCRIPTS_JS: &str = include_str!("scripts.js");
-    let response = axum::response::Response::builder()
+async fn serve_scripts() -> axum::response::Response {
+    axum::response::Response::builder()
         .header("Content-Type", "text/javascript")
-        .body(axum::body::Body::from(SCRIPTS_JS))
-        .context("scripts send make response")?;
-    Ok(response.into_response())
+        .body(axum::body::Body::from(include_str!("scripts.js")))
+        .context("serve_scripts: make response")
+        .unwrap()
+        .into_response()
 }
 
 #[tokio::main]
@@ -954,14 +966,11 @@ async fn main() {
     // Build app
     let app = Router::new()
         .route("/", get(|| async { Redirect::permanent("/user") }))
-        .route("/root", get(|| async { serve_root(None).await }))
-        .route("/root/", get(|| async { serve_root(None).await }))
-        .route("/root/*userpath", get(serve_root))
-        .route("/user", get(|| async { serve_index().await }))
-        .route("/user/", get(|| async { serve_index().await }))
         .merge(
             // Static assets
             Router::new()
+                .route("/user", get(serve_index))
+                .route("/user/", get(serve_index))
                 .route("/thumb", get(|| async { serve_svg(SVG_FILE).await }))
                 .route("/thumb/", get(|| async { serve_svg(SVG_FILE).await }))
                 .route(
@@ -974,11 +983,21 @@ async fn main() {
                 )
                 .route("/thumbimg", get(serve_loading_png))
                 .route("/thumbimg/", get(serve_loading_png))
-                .route("/styles.css", get(|| async { serve_styles().await }))
-                .route("/scripts.js", get(|| async { serve_scripts().await }))
+                .route("/styles.css", get(serve_styles))
+                .route("/scripts.js", get(serve_scripts))
+                // ... with HTTP caching
                 .layer(map_response(add_static_cache_control)),
         )
-        .route("/thumb/*userpath", get(serve_thumb::<200, 200>))
+        .merge(
+            Router::new()
+                .route("/root", get(serve_root))
+                .route("/root/", get(serve_root))
+                .route("/root/*userpath", get(serve_root))
+                // Special route for dynamic thumbnails
+                .route("/thumb/*userpath", get(serve_thumb::<_, 200, 200>))
+                .layer(map_request(resolve_path)),
+        )
+        // basic logging
         .layer(TraceLayer::new_for_http());
 
     // Start server, listening on port 3000
