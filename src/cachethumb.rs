@@ -152,9 +152,7 @@ pub fn spawn_cache_process() -> Mpsc {
                     let metadata = tokio::fs::metadata(path.as_ref()).await;
                     // For any I/O errors, just ignore it quietly.
                     if metadata.is_err() {
-                        tracing::debug!(
-                            "Get {path:?} was 'stale' (I/O error)"
-                        );
+                        tracing::debug!("Get {path:?} was 'stale' (I/O error)");
                         reply_to.send(None).unwrap();
                         continue;
                     }
@@ -178,9 +176,7 @@ pub fn spawn_cache_process() -> Mpsc {
                     // Decide.
                     if flastmod > clastmod {
                         // Stale
-                        tracing::trace!(
-                            "Get {path:?} was stale (fs > cache)"
-                        );
+                        tracing::trace!("Get {path:?} was stale (fs > cache)");
                         reply_to.send(None).unwrap();
                     } else {
                         // Fresh
