@@ -414,7 +414,24 @@ async fn dirlist<const N: usize>(
             ));
         } else if metadata.is_file() {
             // Decide whether the file should have a custom thumbnail
-            let use_custom_thumbnail = extjpeg(path.as_ref());
+            // heuristically based on the file extension.
+            let use_custom_thumbnail = {
+                let ext = path.as_ref().extension();
+                if ext.is_none() {
+                    false
+                } else {
+                    let ext = ext.unwrap();
+                    ext.len() <= 4
+                        && ext.is_ascii()
+                        && (matches!(
+                            ext.as_bytes(),
+                            b"jpg" | b"jpeg" | b"png" | b"gif" | b"webp"
+                        ) || matches!(
+                            ext.as_bytes().to_ascii_lowercase().as_slice(),
+                            b"jpg" | b"jpeg" | b"png" | b"gif" | b"webp"
+                        ))
+                }
+            };
 
             domaindir.files.push(DomainFile::new(
                 server_path,
@@ -453,48 +470,4 @@ pub async fn dirlistjson<const N: usize>(
     parent_path: &ResolvedPath,
 ) -> Result<axum::response::Response> {
     Ok(dirlist::<N>(path, parent_path).await?.into_response())
-}
-
-/// By looking at the extension of a &Path only, heuristically decide whether
-/// the file might be one of the thumbnail-supported JPEG file.
-/// I will refactor this code to support more than just JPEG. But, for now,
-/// I'm going to delegate the flexibility to the human programmer.
-fn extjpeg(path: &Path) -> bool {
-    let ext = path.extension();
-    if ext.is_none() {
-        return false;
-    }
-    let ext = ext.unwrap();
-    let extu8 = ext.as_bytes();
-
-    // If the extension is one of the following, then
-    // we will use the custom thumbnail.
-    // It's really dumb, but it works without allocating.
-    matches!(
-        extu8,
-        b"jpg"
-            | b"jpG"
-            | b"jPg"
-            | b"jPG"
-            | b"Jpg"
-            | b"JpG"
-            | b"JPg"
-            | b"JPG"
-            | b"jpeg"
-            | b"jpeG"
-            | b"jpEg"
-            | b"jpEG"
-            | b"jPeg"
-            | b"jPeG"
-            | b"jPEg"
-            | b"jPEG"
-            | b"Jpeg"
-            | b"JpeG"
-            | b"JpEg"
-            | b"JpEG"
-            | b"JPeg"
-            | b"JPeG"
-            | b"JPEg"
-            | b"JPEG"
-    )
 }
