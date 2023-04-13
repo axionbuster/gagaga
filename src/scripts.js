@@ -1,7 +1,7 @@
 // ChatGPT
+// axionbuster
 
 document.addEventListener('DOMContentLoaded', () => {
-    const fileTable = document.getElementById('fileTable');
     const tableBody = document.getElementById('tableBody');
     const toggleTheme = document.getElementById('toggleTheme');
 
@@ -9,16 +9,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const loadData = async () => {
         const response = await fetch('/root/');
-        const files = await response.json();
-        displayFiles(files);
-    };
+        const json = await response.json();
+        const files = json.files;
 
-    const displayFiles = (files) => {
         files.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
 
+        // FIXME: Turn this into safer HTML.
         const rows = files.map(file => `
             <tr>
-                <td><img src="${file.thumb_url}" loading="lazy"></td>
+                <td><img class="thumb" src="${file.thumb_url}" loading="lazy"></td>
                 <td><a href="${file.url}">${file.name}</a></td>
                 <td>${new Date(file.last_modified).toLocaleString()}</td>
             </tr>
