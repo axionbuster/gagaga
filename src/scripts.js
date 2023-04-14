@@ -41,7 +41,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const backRow = document.getElementById('backRow');
         backRow.style = 'display: none;';
     } else {
-        backRow = document.getElementById('backRow');
+        const backRow = document.getElementById('backRow');
         backRow.style = '';
     }
 
@@ -50,17 +50,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const rootRow = document.getElementById('rootRow');
         rootRow.style = 'display: none;';
     } else {
-        rootRow = document.getElementById('rootRow');
+        const rootRow = document.getElementById('rootRow');
         rootRow.style = '';
     }
 
-    // When we click on the back row, we go to the parent directory.
-    backRow.addEventListener('click', () => {
-        // Find the parent directory.
+    // Inject the back row (..) link.
+    {
+        const backRow = document.getElementById('backRowLink');
         const parent = extraPath.substring(0, extraPath.lastIndexOf('/'));
-        // Redirect (soft).
-        window.location.pathname = '/user' + parent;
-    });
+        backRow.href = '/user' + parent;
+    }
 
     const loadData = async (extraPath) => {
         const response = await fetch('/root' + extraPath);
@@ -84,16 +83,15 @@ incompatible. Please update your client.`);
         directories.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
         files.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
 
-        // TODO: Refactor
+        // Add the rows to the table.
         for (const directory of directories) {
             addRowsToTable(directory);
         }
-
         for (const file of files) {
             addRowsToTable(file);
         }
 
-        // Summarize the filesystem object and add it to the table.
+        // Summarize a filesystem object and add it to the table.
         function addRowsToTable(fsObject) {
             // <tr>
             //  <td><img ... /></td>        (thumbnail)

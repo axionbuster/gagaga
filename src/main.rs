@@ -104,8 +104,9 @@ async fn serve_root<B>(
             .first_or_octet_stream();
         // If the file is short enough and it says octet stream,
         // then decide whether it's a text file by deep inspection.
-        if buf.len() < 1024 * 1024 && mime == mime::APPLICATION_OCTET_STREAM {
-            let len = buf.len().min(1024 * 1024);
+        const ONEMB: usize = 1024 * 1024;
+        if buf.len() < ONEMB && mime == mime::APPLICATION_OCTET_STREAM {
+            let len = buf.len().min(ONEMB);
             let slice = &buf[..len];
             let is_text = std::str::from_utf8(slice).is_ok();
             if is_text {
@@ -115,11 +116,16 @@ async fn serve_root<B>(
         let mut response_builder = axum::response::Response::builder()
             .header("Content-Type", mime.to_string());
         // if still octet-stream, or (X)HTML, or JavaScript, then say it's an attachment.
+        // For heavy media such as videos and sounds, also, say it's an attachment.
+        // Also, any file greater than or equal to 1MB is an attachment.
         if mime == mime::APPLICATION_OCTET_STREAM
             || mime == mime::TEXT_HTML
             || mime == mime::TEXT_XML
             || mime == mime::APPLICATION_JAVASCRIPT
             || mime == mime::TEXT_JAVASCRIPT
+            || mime.type_() == mime::VIDEO
+            || mime.type_() == mime::AUDIO
+            || buf.len() >= ONEMB
         {
             response_builder =
                 response_builder.header("Content-Disposition", "attachment");
