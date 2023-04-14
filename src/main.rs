@@ -119,13 +119,21 @@ async fn serve_root<B: std::fmt::Debug>(
     }
 
     // A directory. List it with a limit of 3000 files.
-    dirlistjson::<3000>(
+    let json = dirlistjson::<3000>(
         // path (user's control)
         &userpathreal,
         // don't go outside of the root directory (server's control)
         ROOT.get().unwrap(),
     )
-    .await
+    .await?;
+
+    // Axum: make a response.
+    let response = axum::response::Response::builder()
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(json))
+        .context("dirlist send make response")?;
+
+    Ok(response.into_response())
 }
 
 /// Serve SVG File Icon (Font Awesome)
