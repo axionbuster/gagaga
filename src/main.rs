@@ -13,22 +13,27 @@ use mime_guess::mime;
 use tokio::{io::AsyncReadExt, sync::OnceCell};
 use tracing::instrument;
 
-mod domainprim;
+mod domain;
 
 mod cachethumb;
+mod primitive;
+mod vfs;
+
+use primitive::*;
+use UnifiedError::*;
 
 /// The root directory of the server.
-static ROOT: OnceCell<domainprim::RealPath> = OnceCell::const_new();
+static ROOT: OnceCell<domain::RealPath> = OnceCell::const_new();
 
-/// Use as middleware to resolve "the path" (see [`pathresolve`](crate::domainprim::pathresolve))
+/// Use as middleware to resolve "the path" (see [`pathresolve`](crate::domain::pathresolve))
 /// from the request. Return 404 if the path fails to resolve.
 #[instrument(err, skip(request), fields(path = %userpath.as_ref().map(|x| x.as_str()).unwrap_or("/")))]
 async fn resolve_path<B>(
     userpath: Option<axum::extract::Path<String>>,
     mut request: axum::http::Request<B>,
-) -> domainprim::Result<axum::http::Request<B>> {
+) -> Result<axum::http::Request<B>> {
     // Domain-specific primitives
-    use crate::domainprim::{pathresolve, RealPath};
+    use crate::domain::{pathresolve, RealPath};
 
     use std::fs::Metadata;
 
@@ -66,14 +71,14 @@ async fn resolve_path<B>(
 #[instrument(err, skip(request))]
 async fn serve_root<B>(
     request: axum::http::Request<B>,
-) -> domainprim::Result<axum::response::Response> {
+) -> Result<axum::response::Response> {
     // Domain-specific primitives
-    use crate::domainprim::{dirlistjson, UnifiedError::*};
+    use crate::domain::dirlistjson;
 
     // Get the resolved path from the request.
     let userpathreal = request
         .extensions()
-        .get::<domainprim::RealPath>()
+        .get::<domain::RealPath>()
         .unwrap()
         .clone();
     let filemetadata = request
@@ -216,14 +221,13 @@ static CACHEMPSC: OnceCell<cachethumb::Mpsc> = OnceCell::const_new();
 async fn serve_thumb<B, const TW: u32, const TH: u32>(
     headers: axum::http::HeaderMap,
     request: axum::http::Request<B>,
-) -> domainprim::Result<axum::response::Response> {
+) -> Result<axum::response::Response> {
     // Domain-specific primitives
-    use crate::domainprim::UnifiedError::*;
 
     // Get the resolved path & metadata from the request.
     let userpathreal = request
         .extensions()
-        .get::<domainprim::RealPath>()
+        .get::<domain::RealPath>()
         .unwrap()
         .clone();
     let filemetadata = request
@@ -327,8 +331,8 @@ async fn serve_thumb<B, const TW: u32, const TH: u32>(
 /// thread using Tokio.
 #[instrument]
 async fn gen_thumb<const TW: u32, const TH: u32>(
-    userpathreal: &domainprim::RealPath,
-) -> domainprim::Result<Vec<u8>> {
+    userpathreal: &domain::RealPath,
+) -> Result<Vec<u8>> {
     let mut file = tokio::fs::File::open(userpathreal.as_ref()).await?;
     let mut buf = vec![];
     file.read_to_end(&mut buf).await?;
@@ -412,7 +416,7 @@ Usage: ./(program) (root directory)"
     };
     tracing::info!("Serving at {root:?}");
 
-    let root = domainprim::RealPath::from_trusted_pathbuf(root);
+    let root = domain::RealPath::from_trusted_pathbuf(root);
     ROOT.set(root).unwrap();
 
     // Also, primitively cache the thumbnails.
