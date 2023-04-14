@@ -174,19 +174,21 @@ pub async fn dirlistjson<const N: usize>(
             break;
         }
         let entry = entry.unwrap();
-        // Follow symlinks and resolve the path.
-        // Make sure the actual path is a subpath of the working directory.
-        let path = pathresolve(&entry.path(), parent_path).await;
-        if path.is_err() {
-            continue;
-        }
-        let path = path.unwrap();
+        // Retrieve the full path
+        let path = entry.path();
         // Get the file metadata
-        let metadata = tokio::fs::metadata(path.as_ref()).await;
+        let metadata = tokio::fs::metadata(&path).await;
         if metadata.is_err() {
             continue;
         }
         let metadata = metadata.unwrap();
+        // Make sure either a link, file or a directory
+        if !metadata.file_type().is_symlink()
+            && !metadata.file_type().is_file()
+            && !metadata.file_type().is_dir()
+        {
+            continue;
+        }
         // Last modified
         let last_modified = metadata
             .modified()
@@ -202,7 +204,7 @@ pub async fn dirlistjson<const N: usize>(
         // File name
         let name = entry.file_name().to_string_lossy().to_string();
         // Path relative to the working directory
-        let relpath = path.as_ref().strip_prefix(parent_path.as_ref());
+        let relpath = path.strip_prefix(parent_path.as_ref());
         if relpath.is_err() {
             continue;
         }
@@ -215,7 +217,6 @@ pub async fn dirlistjson<const N: usize>(
         };
         // Decide custom thumbnail by file extension
         let custom_thumb = path
-            .as_ref()
             .extension()
             .map(|s| {
                 s.to_str()
