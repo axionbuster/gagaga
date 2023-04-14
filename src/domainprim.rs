@@ -85,24 +85,28 @@ impl From<std::io::Error> for UnifiedError {
 pub type Result<T> = std::result::Result<T, UnifiedError>;
 
 /// An absolute, resolved file path that was trusted when it was created.
-/// This is relative to the server's computer.
+/// This is relative to the server's computer. This path is "real,"
+/// meaning it's not virtualized.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ResolvedPath(PathBuf);
+pub struct RealPath(PathBuf);
 
-impl ResolvedPath {
+impl RealPath {
     /// Trust a PathBuf with no validation whatsoever.
     ///
     /// This should be used only when the path is known to be
     /// absolute and resolved, and is not user input.
     ///
     /// Hence, no [`From`] implementation is provided.
-    pub fn from_trusted_pathbuf(path: PathBuf) -> ResolvedPath {
-        ResolvedPath(path)
+    ///
+    /// It should be a valid, absolute path that cannot be further
+    /// resolved.
+    pub fn from_trusted_pathbuf(path: PathBuf) -> RealPath {
+        RealPath(path)
     }
 }
 
 /// Expose the &Path reference
-impl AsRef<Path> for ResolvedPath {
+impl AsRef<Path> for RealPath {
     fn as_ref(&self) -> &Path {
         self.0.as_ref()
     }
@@ -114,8 +118,8 @@ impl AsRef<Path> for ResolvedPath {
 #[instrument(err, level = "debug")]
 pub async fn pathresolve(
     pathuser: &Path,
-    workdir: &ResolvedPath,
-) -> Result<ResolvedPath> {
+    workdir: &RealPath,
+) -> Result<RealPath> {
     // Do a quick check to see if the path is "normal"
     if !pathuser.components().all(|c| {
         matches!(
@@ -140,14 +144,14 @@ directory {workdir:?}"
         )));
     }
 
-    Ok(ResolvedPath(path))
+    Ok(RealPath(path))
 }
 
 /// Produce a JSON response from the directory listing that can be
 /// consumed by the frontend.
 pub async fn dirlistjson<const N: usize>(
-    path: &ResolvedPath,
-    parent_path: &ResolvedPath,
+    path: &RealPath,
+    parent_path: &RealPath,
 ) -> Result<String> {
     const API_VERSION: &str = "011";
     let mut n_entries = 0;

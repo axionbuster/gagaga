@@ -34,7 +34,7 @@
 use tokio::sync::mpsc;
 use tracing::instrument;
 
-use crate::domainprim::{systime2datetime, DateTime, ResolvedPath};
+use crate::domainprim::{systime2datetime, DateTime, RealPath};
 
 use std::collections::HashMap;
 
@@ -58,13 +58,13 @@ pub struct CacheResponse {
 #[derive(Debug)]
 enum CacheMessage {
     /// Insert a new thumbnail (`Vec<u8>`) now.
-    Insert(ResolvedPath, Vec<u8>),
+    Insert(RealPath, Vec<u8>),
     /// Get a thumbnail (`Vec<u8>`) now only if fresh.
     ///
     /// The manager will inspect the file system asynchronously to
     /// determine freshness if necessary.
     Get(
-        ResolvedPath,
+        RealPath,
         tokio::sync::oneshot::Sender<Option<CacheResponse>>,
     ),
 }
@@ -94,7 +94,7 @@ pub struct Mpsc(mpsc::UnboundedSender<CacheMessage>);
 
 impl Mpsc {
     /// Insert a new thumbnail (`Vec<u8>`) now.
-    pub fn ins(&self, path: &ResolvedPath, data: Vec<u8>) {
+    pub fn ins(&self, path: &RealPath, data: Vec<u8>) {
         self.0
             .send(CacheMessage::Insert(path.clone(), data))
             // If fail, quietly drop the message.
@@ -110,7 +110,7 @@ impl Mpsc {
     /// - Fresh: exists and cache is more recent than the file system.
     /// - Stale: exists but cache is older than the file system.
     /// - (Neither): missing, does not exist.
-    pub async fn get(&self, path: &ResolvedPath) -> Option<CacheResponse> {
+    pub async fn get(&self, path: &RealPath) -> Option<CacheResponse> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.0.send(CacheMessage::Get(path.clone(), tx)).unwrap();
         // flatten: Option<Option<T>> -> Option<T>
@@ -127,8 +127,7 @@ pub fn spawn_cache_process() -> Mpsc {
     let (tx, mut rx) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         // Global data structure
-        let mut cache: HashMap<ResolvedPath, (DateTime, Vec<u8>)> =
-            HashMap::new();
+        let mut cache: HashMap<RealPath, (DateTime, Vec<u8>)> = HashMap::new();
         // Event loop
         while let Some(msg) = rx.recv().await {
             match msg {

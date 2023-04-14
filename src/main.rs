@@ -18,7 +18,7 @@ mod domainprim;
 mod cachethumb;
 
 /// The root directory of the server.
-static ROOT: OnceCell<domainprim::ResolvedPath> = OnceCell::const_new();
+static ROOT: OnceCell<domainprim::RealPath> = OnceCell::const_new();
 
 /// Use as middleware to resolve "the path" (see [`pathresolve`](crate::domainprim::pathresolve))
 /// from the request. Return 404 if the path fails to resolve.
@@ -28,7 +28,7 @@ async fn resolve_path<B>(
     mut request: axum::http::Request<B>,
 ) -> domainprim::Result<axum::http::Request<B>> {
     // Domain-specific primitives
-    use crate::domainprim::{pathresolve, ResolvedPath};
+    use crate::domainprim::{pathresolve, RealPath};
 
     use std::fs::Metadata;
 
@@ -49,7 +49,7 @@ async fn resolve_path<B>(
     tracing::trace!("Calc path: {user:?}");
 
     // Resolve the path (convert to absolute, normalize, etc.)
-    let resolved: ResolvedPath = pathresolve(&user, rootdir).await?;
+    let resolved: RealPath = pathresolve(&user, rootdir).await?;
     tracing::trace!("Resolved path: {:?}", resolved);
     request.extensions_mut().insert(resolved.clone());
 
@@ -73,7 +73,7 @@ async fn serve_root<B>(
     // Get the resolved path from the request.
     let userpathreal = request
         .extensions()
-        .get::<domainprim::ResolvedPath>()
+        .get::<domainprim::RealPath>()
         .unwrap()
         .clone();
     let filemetadata = request
@@ -223,7 +223,7 @@ async fn serve_thumb<B, const TW: u32, const TH: u32>(
     // Get the resolved path & metadata from the request.
     let userpathreal = request
         .extensions()
-        .get::<domainprim::ResolvedPath>()
+        .get::<domainprim::RealPath>()
         .unwrap()
         .clone();
     let filemetadata = request
@@ -327,7 +327,7 @@ async fn serve_thumb<B, const TW: u32, const TH: u32>(
 /// thread using Tokio.
 #[instrument]
 async fn gen_thumb<const TW: u32, const TH: u32>(
-    userpathreal: &domainprim::ResolvedPath,
+    userpathreal: &domainprim::RealPath,
 ) -> domainprim::Result<Vec<u8>> {
     let mut file = tokio::fs::File::open(userpathreal.as_ref()).await?;
     let mut buf = vec![];
@@ -412,7 +412,7 @@ Usage: ./(program) (root directory)"
     };
     tracing::info!("Serving at {root:?}");
 
-    let root = domainprim::ResolvedPath::from_trusted_pathbuf(root);
+    let root = domainprim::RealPath::from_trusted_pathbuf(root);
     ROOT.set(root).unwrap();
 
     // Also, primitively cache the thumbnails.
