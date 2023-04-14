@@ -112,9 +112,20 @@ async fn serve_root<B>(
                 mime = mime::TEXT_PLAIN;
             }
         }
-        // Axum: make a response.
-        let response = axum::response::Response::builder()
-            .header("Content-Type", mime.to_string())
+        let mut response_builder = axum::response::Response::builder()
+            .header("Content-Type", mime.to_string());
+        // if still octet-stream, or (X)HTML, or JavaScript, then say it's an attachment.
+        if mime == mime::APPLICATION_OCTET_STREAM
+            || mime == mime::TEXT_HTML
+            || mime == mime::TEXT_XML
+            || mime == mime::APPLICATION_JAVASCRIPT
+            || mime == mime::TEXT_JAVASCRIPT
+        {
+            response_builder =
+                response_builder.header("Content-Disposition", "attachment");
+        }
+        // Attach the body
+        let response = response_builder
             .body(axum::body::Body::from(buf))
             .context("file send make response")?;
         let response = response.into_response();
