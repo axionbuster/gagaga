@@ -63,6 +63,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const loadData = async (extraPath) => {
         const response = await fetch('/root' + extraPath);
+
+        if (!response.ok) {
+            // Let the user know that something went wrong
+            // as a row in the table corresponding to the
+            // HTTP status code and the status text.
+            const tr = document.createElement('tr');
+            const td = document.createElement('td');
+            td.classList.add('error');
+            td.colSpan = 3;
+            td.textContent = `HTTP ${response.status}: ${response.statusText}`;
+            tr.appendChild(td);
+            tableBody.appendChild(tr);
+            return;
+        }
+
         const json = await response.json();
 
         // Check version. It is a three-digit number.
