@@ -122,10 +122,13 @@ incompatible. Please update your client.`);
             imgThumb.alt = ''; // thumbnail; decorative
             imgThumb.width = 100;
             imgThumb.height = 100;
+            // Lazy load the thumbnail with your good old strategy,
+            // background-image + loading=lazy + onload.
+            // Remove CSS background-image (placeholder) once loaded.
             imgThumb.loading = 'lazy';
             imgThumb.style = 'background-image: url(/thumbimg);';
-            // Remove imgThumb.style once loaded (attribute 'complete' is set)
             imgThumb.onload = () => {
+                // Remove imgThumb.style once loaded (attribute 'complete' is set).
                 imgThumb.removeAttribute('style');
             };
             td1.appendChild(imgThumb);
