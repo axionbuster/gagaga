@@ -23,7 +23,7 @@ static ROOT: OnceCell<domainprim::ResolvedPath> = OnceCell::const_new();
 /// Use as middleware to resolve "the path" (see [`pathresolve`](crate::domainprim::pathresolve))
 /// from the request. Return 404 if the path fails to resolve.
 #[instrument(err, skip(request), fields(path = %userpath.as_ref().map(|x| x.as_str()).unwrap_or("/")))]
-async fn resolve_path<B: std::fmt::Debug>(
+async fn resolve_path<B>(
     userpath: Option<axum::extract::Path<String>>,
     mut request: axum::http::Request<B>,
 ) -> domainprim::Result<axum::http::Request<B>> {
@@ -64,7 +64,7 @@ async fn resolve_path<B: std::fmt::Debug>(
 /// Serve a file or directory, downloading if a regular file,
 /// or listing if a directory.
 #[instrument(err, skip(request))]
-async fn serve_root<B: std::fmt::Debug>(
+async fn serve_root<B>(
     request: axum::http::Request<B>,
 ) -> domainprim::Result<axum::response::Response> {
     // Domain-specific primitives
@@ -195,8 +195,8 @@ static CACHEMPSC: OnceCell<cachethumb::Mpsc> = OnceCell::const_new();
 /// If the thumbnail is not available, then serve a default thumbnail.
 ///
 /// Preserve aspect ratio while fitting in TWxTH.
-#[instrument(err)]
-async fn serve_thumb<B: std::fmt::Debug, const TW: u32, const TH: u32>(
+#[instrument(err, skip(request))]
+async fn serve_thumb<B, const TW: u32, const TH: u32>(
     headers: axum::http::HeaderMap,
     request: axum::http::Request<B>,
 ) -> domainprim::Result<axum::response::Response> {
