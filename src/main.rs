@@ -9,6 +9,7 @@ use axum::{
     routing::get,
     Router,
 };
+use mime_guess::mime;
 use tokio::{io::AsyncReadExt, sync::OnceCell};
 use tracing::instrument;
 
@@ -99,8 +100,18 @@ async fn serve_root<B: std::fmt::Debug>(
         file.read_to_end(&mut buf).await?;
         // Guess MIME type by their extension.
         // If can't, say, application/octet-stream.
-        let mime = mime_guess::from_path(userpathreal.as_ref())
+        let mut mime = mime_guess::from_path(userpathreal.as_ref())
             .first_or_octet_stream();
+        // If the file is short enough and it says octet stream,
+        // then decide whether it's a text file by deep inspection.
+        if buf.len() < 1024 * 1024 && mime == mime::APPLICATION_OCTET_STREAM {
+            let len = buf.len().min(1024 * 1024);
+            let slice = &buf[..len];
+            let is_text = std::str::from_utf8(slice).is_ok();
+            if is_text {
+                mime = mime::TEXT_PLAIN;
+            }
+        }
         // Axum: make a response.
         let response = axum::response::Response::builder()
             .header("Content-Type", mime.to_string())
