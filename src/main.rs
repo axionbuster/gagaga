@@ -122,16 +122,26 @@ async fn serve_root(
                 mime = mime::TEXT_PLAIN;
             }
         }
+        // If it's HTML, XML, JavaScript, CSS, or JSON, then say it's text/plain.
+        // It's because browsers will try to execute them,
+        // someone might try to inject malicious code, or
+        // someone might try to host a website or part of it on this server.
+        if mime == mime::TEXT_HTML
+            || mime == mime::TEXT_XML
+            || mime == mime::TEXT_JAVASCRIPT
+            || mime == mime::APPLICATION_JAVASCRIPT
+            || mime == mime::APPLICATION_JAVASCRIPT_UTF_8
+            || mime == mime::TEXT_CSS
+            || mime == mime::APPLICATION_JSON
+        {
+            mime = mime::TEXT_PLAIN;
+        }
         let mut response_builder = axum::response::Response::builder()
             .header("Content-Type", mime.to_string());
-        // if still octet-stream, or (X)HTML, or JavaScript, then say it's an attachment.
+        // if still octet-stream, say it's an attachment.
         // For heavy media such as videos and sounds, also, say it's an attachment.
         // Also, any file greater than or equal to 1MB is an attachment.
         if mime == mime::APPLICATION_OCTET_STREAM
-            || mime == mime::TEXT_HTML
-            || mime == mime::TEXT_XML
-            || mime == mime::APPLICATION_JAVASCRIPT
-            || mime == mime::TEXT_JAVASCRIPT
             || mime.type_() == mime::VIDEO
             || mime.type_() == mime::AUDIO
             || buf.len() >= ONEMB
