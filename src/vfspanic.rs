@@ -53,7 +53,7 @@ impl VfsV1 for VfsPanic {
         panic!("VfsPanic::listdirsync");
     }
 
-    async fn readfile<P: AsRef<Path> + Send + Sync>(
+    async fn openfile<P: AsRef<Path> + Send + Sync>(
         self,
         _path: &P,
     ) -> Result<Box<dyn VfsTokioFile>> {

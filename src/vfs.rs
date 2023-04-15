@@ -143,9 +143,15 @@ impl From<tokio::fs::File> for TokioFile {
     }
 }
 
-/// An implementation of an asynchronous virtual file system.
+/// A specification of a virtual file system.
 ///
-/// Some quick and dirty stuff.
+/// Implementations are expected be zero-sized structs.
+///
+/// - Open and read or seek into files asynchronously. See
+/// [`AsyncRead`](tokio::io::AsyncRead) and [`AsyncSeek`](tokio::io::AsyncSeek).
+/// - Get metadata of objects synchronously or asynchronously.
+/// - List directory contents synchronously (TODO: asynchronously).
+/// - Canonicalize paths synchronously or asynchronously.
 #[async_trait::async_trait]
 pub trait VfsV1: Copy + Send + Sync + 'static {
     /// Asynchronously canonicalize a path.
@@ -160,7 +166,7 @@ pub trait VfsV1: Copy + Send + Sync + 'static {
         path: &P,
     ) -> Result<PathBuf>;
 
-    /// Asynchrnously get the metadata of a file.
+    /// Asynchronously get the metadata of a file.
     async fn stat<P: AsRef<Path> + Send + Sync>(
         self,
         path: &P,
@@ -185,8 +191,8 @@ pub trait VfsV1: Copy + Send + Sync + 'static {
         limit: Option<usize>,
     ) -> Result<(bool, Vec<FileStat>)>;
 
-    /// Asynchronously read a file.
-    async fn readfile<P: AsRef<Path> + Send + Sync>(
+    /// Open a file to start reading asynchronously.
+    async fn openfile<P: AsRef<Path> + Send + Sync>(
         self,
         path: &P,
     ) -> Result<Box<dyn VfsTokioFile>> {

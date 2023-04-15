@@ -103,7 +103,7 @@ async fn serve_root(
     // If it's a regular file, then download it.
     if filemetadata.isfile() {
         // First, let Tokio read it asynchronously.
-        let mut file = VfsImplA.readfile(&userpathreal).await?;
+        let mut file = VfsImplA.openfile(&userpathreal).await?;
         // Read everything into a Vec<u8>.
         let mut buf = vec![];
         file.read_to_end(&mut buf).await?;
@@ -339,7 +339,7 @@ async fn serve_thumb<B, const TW: u32, const TH: u32>(
 async fn gen_thumb<const TW: u32, const TH: u32>(
     userpathreal: &domain::RealPath,
 ) -> Result<Vec<u8>> {
-    let mut file = VfsImplA.readfile(userpathreal).await?;
+    let mut file = VfsImplA.openfile(userpathreal).await?;
     let mut buf = vec![];
     file.read_to_end(&mut buf).await?;
     let cursor = std::io::Cursor::new(buf);

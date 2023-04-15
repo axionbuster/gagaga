@@ -77,6 +77,7 @@ directory {workdir:?}"
 
 /// Produce a JSON response from the directory listing that can be
 /// consumed by the frontend.
+#[instrument(err, level = "debug", skip(vfs))]
 pub async fn dirlistjson<const N: usize>(
     path: &RealPath,
     parent_path: &RealPath,
@@ -106,18 +107,25 @@ pub async fn dirlistjson<const N: usize>(
             let is_symlink = entry.issymlink();
 
             // If symlink, that of the resolved target.
+            // Under this interpretation, it's definitely possible to observe
+            // ("is_symlink" AND ("is_dir" OR "is_file")) == true.
             let is_dir;
             let is_file;
 
             // If symlink, probe the target
             if is_symlink {
+                tracing::trace!("dirlistjson: Symlink: {:#?}", entry);
+                // Resolve the target.
+                // If it's not a file or directory, skip.
                 let target = vfs.canonicalizesync(entry.path().unwrap());
                 if target.is_err() {
+                    tracing::trace!("dirlistjson: Resolve symlink fail: {:#?}", entry);
                     continue;
                 }
                 let target = target.unwrap();
                 let metadata = vfs.statsync(&target);
                 if metadata.is_err() {
+                    tracing::trace!("dirlistjson: Stat symlink target fail: {:#?}", entry);
                     continue;
                 }
                 let metadata = metadata.unwrap();
@@ -134,7 +142,7 @@ pub async fn dirlistjson<const N: usize>(
             }
 
             // Probe the properties
-            // If symlink, those of the symlink itself without following.
+            // If symlink, those of the symlink itself WITHOUT following.
             let name = name.unwrap();
             let name = name.to_string_lossy().to_string();
             let lastmod = entry.lastmod();
@@ -206,8 +214,6 @@ pub async fn dirlistjson<const N: usize>(
             if is_dir {
                 // The URL is "/user/{}" --- this allows browsing
                 let url = Path::new("/user").join(path);
-
-                tracing::debug!("dirlistjson: url = {:?}, path = {:?}", url, path);
 
                 // Directories have a fixed thumbnail of "/thumbdir"
                 let thumb_url = Path::new("/thumbdir");
