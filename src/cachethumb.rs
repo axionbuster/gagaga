@@ -36,6 +36,8 @@ use tracing::instrument;
 
 use crate::domain::RealPath;
 use crate::primitive::*;
+use crate::vfs::VfsV1;
+use crate::vfsa::VfsImplA;
 
 use std::collections::HashMap;
 
@@ -149,7 +151,7 @@ pub fn spawn_cache_process() -> Mpsc {
                     }
 
                     // Now, inspect the filesystem.
-                    let metadata = tokio::fs::metadata(path.as_ref()).await;
+                    let metadata = VfsImplA.stat(&path).await;
                     // For any I/O errors, just ignore it quietly.
                     if metadata.is_err() {
                         tracing::debug!("Get {path:?} was 'stale' (I/O error)");
@@ -157,8 +159,7 @@ pub fn spawn_cache_process() -> Mpsc {
                         continue;
                     }
                     let metadata = metadata.unwrap();
-                    let flastmod =
-                        metadata.modified().ok().and_then(systime2datetime);
+                    let flastmod = metadata.lastmod();
                     // If can't get the modification time, then just ignore it quietly.
                     if flastmod.is_none() {
                         tracing::debug!(

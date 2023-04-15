@@ -7,7 +7,10 @@ edition = "2021"
 
 [dependencies]
 anyhow = { version = "1.0.70", features = ["backtrace"] }
-axum = { version = "0.6.12", features = ["tracing"] } # tracing -- log rejected requests
+async-trait = "0.1.68"
+# tracing -- log rejected requests
+# macros -- debug type errors
+axum = { version = "0.6.12", features = ["tracing", "macros"] }
 chrono = "0.4.24"
 http = "0.2.9"
 image = { version = "0.24.6", default-features = false, features = ["jpeg", "png", "gif", "webp"] }

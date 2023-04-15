@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use axum::{
+    // debug_handler, // (useful for debugging obscure type errors)
     middleware::{map_request, map_response},
     response::IntoResponse,
     routing::get,
@@ -18,9 +19,14 @@ mod domain;
 mod cachethumb;
 mod primitive;
 mod vfs;
+mod vfsa;
+mod vfspanic;
 
 use primitive::*;
 use UnifiedError::*;
+
+use crate::vfs::{FileStat, VfsV1};
+use crate::vfsa::VfsImplA;
 
 /// The root directory of the server.
 static ROOT: OnceCell<domain::RealPath> = OnceCell::const_new();
@@ -34,8 +40,6 @@ async fn resolve_path<B>(
 ) -> Result<axum::http::Request<B>> {
     // Domain-specific primitives
     use crate::domain::{pathresolve, RealPath};
-
-    use std::fs::Metadata;
 
     let rootdir = ROOT.get().unwrap();
 
@@ -54,12 +58,12 @@ async fn resolve_path<B>(
     tracing::trace!("Calc path: {user:?}");
 
     // Resolve the path (convert to absolute, normalize, etc.)
-    let resolved: RealPath = pathresolve(&user, rootdir).await?;
-    tracing::trace!("Resolved path: {:?}", resolved);
-    request.extensions_mut().insert(resolved.clone());
+    let realpath: RealPath = pathresolve(&user, rootdir, VfsImplA).await?;
+    tracing::trace!("Resolved path: {:?}", realpath);
+    request.extensions_mut().insert(realpath.clone());
 
     // Find the metadata, too, by running fstat (or equivalent).
-    let metadata: Option<Metadata> = tokio::fs::metadata(resolved).await.ok();
+    let metadata: Option<FileStat> = VfsImplA.stat(&realpath).await.ok();
     tracing::trace!("Metadata: {:?}", metadata);
     request.extensions_mut().insert(metadata);
 
@@ -69,8 +73,8 @@ async fn resolve_path<B>(
 /// Serve a file or directory, downloading if a regular file,
 /// or listing if a directory.
 #[instrument(err, skip(request))]
-async fn serve_root<B>(
-    request: axum::http::Request<B>,
+async fn serve_root(
+    request: axum::http::Request<axum::body::Body>,
 ) -> Result<axum::response::Response> {
     // Domain-specific primitives
     use crate::domain::dirlistjson;
@@ -83,7 +87,7 @@ async fn serve_root<B>(
         .clone();
     let filemetadata = request
         .extensions()
-        .get::<Option<std::fs::Metadata>>()
+        .get::<Option<FileStat>>()
         .unwrap()
         .clone();
 
@@ -97,9 +101,9 @@ async fn serve_root<B>(
     let filemetadata = filemetadata.unwrap();
 
     // If it's a regular file, then download it.
-    if filemetadata.is_file() {
+    if filemetadata.isfile() {
         // First, let Tokio read it asynchronously.
-        let mut file = tokio::fs::File::open(userpathreal.as_ref()).await?;
+        let mut file = VfsImplA.readfile(&userpathreal).await?;
         // Read everything into a Vec<u8>.
         let mut buf = vec![];
         file.read_to_end(&mut buf).await?;
@@ -145,7 +149,7 @@ async fn serve_root<B>(
     }
 
     // If it's not a directory, then say, not found.
-    if !filemetadata.is_dir() {
+    if !filemetadata.isdir() {
         return Err(NotFound(anyhow::anyhow!(
             "serve_user_path: neither a file nor a directory"
         )));
@@ -155,8 +159,10 @@ async fn serve_root<B>(
     let json = dirlistjson::<3000>(
         // path (user's control)
         &userpathreal,
-        // don't go outside of the root directory (server's control)
+        // parent path (server's control)
         ROOT.get().unwrap(),
+        // dependency injection
+        VfsImplA,
     )
     .await?;
 
@@ -232,7 +238,7 @@ async fn serve_thumb<B, const TW: u32, const TH: u32>(
         .clone();
     let filemetadata = request
         .extensions()
-        .get::<Option<std::fs::Metadata>>()
+        .get::<Option<FileStat>>()
         .unwrap()
         .clone();
 
@@ -243,12 +249,12 @@ async fn serve_thumb<B, const TW: u32, const TH: u32>(
     let filemetadata = filemetadata.unwrap();
 
     // If directory, then serve the folder icon.
-    if filemetadata.is_dir() {
+    if filemetadata.isdir() {
         return Ok(serve_svg_folder_icon().await);
     }
 
     // If not file, reject.
-    if !filemetadata.is_file() {
+    if !filemetadata.isfile() {
         return Err(NotFound(anyhow::anyhow!(
             "serve_thumb: neither a file nor a directory"
         )));
@@ -333,7 +339,7 @@ async fn serve_thumb<B, const TW: u32, const TH: u32>(
 async fn gen_thumb<const TW: u32, const TH: u32>(
     userpathreal: &domain::RealPath,
 ) -> Result<Vec<u8>> {
-    let mut file = tokio::fs::File::open(userpathreal.as_ref()).await?;
+    let mut file = VfsImplA.readfile(userpathreal).await?;
     let mut buf = vec![];
     file.read_to_end(&mut buf).await?;
     let cursor = std::io::Cursor::new(buf);
@@ -409,7 +415,8 @@ Usage: ./(program) (root directory)"
         tracing::info!("Root directory specified: {arg:?}", arg = &args[1]);
         // TODO: Let the user know if the path uses glob patterns.
         let temp = PathBuf::from(&args[1]);
-        tokio::fs::canonicalize(temp)
+        VfsImplA
+            .canonicalize(&temp)
             .await
             .context("The root directory as specified failed to canonicalize")
             .unwrap()

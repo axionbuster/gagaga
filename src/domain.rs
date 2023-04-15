@@ -1,11 +1,15 @@
 //! Define domain-specific types and processes
+use std::os::unix::prelude::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use rand::seq::SliceRandom;
+use serde_json::json;
 use tracing::instrument;
 
 use crate::primitive::*;
+
+use crate::vfs;
 
 /// An absolute, resolved file path that was trusted when it was created.
 /// This is relative to the server's computer. This path is "real,"
@@ -38,10 +42,11 @@ impl AsRef<Path> for RealPath {
 /// Given a normal, relative path (to the given working directory),
 /// attempt to canonicalize it by following symlinks and resolving
 /// paths, producing an absolute path.
-#[instrument(err, level = "debug")]
+#[instrument(err, level = "debug", skip(vfs))]
 pub async fn pathresolve(
     pathuser: &Path,
     workdir: &RealPath,
+    vfs: impl vfs::VfsV1,
 ) -> Result<RealPath> {
     // Do a quick check to see if the path is "normal"
     if !pathuser.components().all(|c| {
@@ -57,7 +62,7 @@ pub async fn pathresolve(
 
     // Ask Tokio to resolve the path asynchronously
     let meantpath = workdir.as_ref().join(pathuser);
-    let path = tokio::fs::canonicalize(meantpath).await?;
+    let path = vfs.canonicalize(&meantpath).await?;
 
     // Decide whether the resolved path is a subpath of the parent
     if !path.starts_with(workdir.as_ref()) {
@@ -75,121 +80,166 @@ directory {workdir:?}"
 pub async fn dirlistjson<const N: usize>(
     path: &RealPath,
     parent_path: &RealPath,
+    vfs: impl vfs::VfsV1,
 ) -> Result<String> {
-    const API_VERSION: &str = "011";
-    let mut n_entries = 0;
-    let mut readdir = tokio::fs::read_dir(path.as_ref()).await?;
-    let mut rootobject = serde_json::Map::new();
+    let path = path.clone();
+    let parent_path = parent_path.clone();
+    tokio::task::spawn_blocking(move || {
+        const API_VERSION: &str = "012";
+        let mut rootobject = serde_json::Map::new();
 
-    // Add the API version
-    rootobject.insert("version".to_string(), API_VERSION.into());
+        // Add the API version
+        rootobject.insert("version".to_string(), API_VERSION.into());
 
-    // Files and directories are collected separately, then shuffled.
-    let mut files = Vec::new();
-    let mut directories = Vec::new();
+        // Files and directories are collected separately, then shuffled.
+        let mut files = Vec::new();
+        let mut directories = Vec::new();
 
-    // Traverse the directory entries
-    while n_entries < N {
-        n_entries += 1;
-        let entry = readdir.next_entry().await;
-        if entry.is_err() {
-            continue;
+        // Collect entries
+        let path = &path;
+        let (truncated, entries) = vfs.listdirsync(path, Some(N))?;
+        for entry in entries {
+            let name = entry.basename();
+            if name.is_none() {
+                continue;
+            }
+            let is_symlink = entry.issymlink();
+
+            // If symlink, that of the resolved target.
+            let is_dir;
+            let is_file;
+
+            // If symlink, probe the target
+            if is_symlink {
+                let target = vfs.canonicalizesync(entry.path().unwrap());
+                if target.is_err() {
+                    continue;
+                }
+                let target = target.unwrap();
+                let metadata = vfs.statsync(&target);
+                if metadata.is_err() {
+                    continue;
+                }
+                let metadata = metadata.unwrap();
+                is_dir = metadata.isdir();
+                is_file = metadata.isfile();
+            } else {
+                is_dir = entry.isdir();
+                is_file = entry.isfile();
+            }
+
+            // Skip weird files
+            if !is_dir && !is_symlink && !is_file {
+                continue;
+            }
+
+            // Probe the properties
+            // If symlink, those of the symlink itself without following.
+            let name = name.unwrap();
+            let name = name.to_string_lossy().to_string();
+            let lastmod = entry.lastmod();
+            if lastmod.is_none() {
+                continue;
+            }
+            let lastmod = lastmod.unwrap();
+            // Use RFC3339 format for last modified time using
+            // Z+ for timezone ("true")
+            let lastmod_httpstr = lastmod.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+
+            // Calculate the navigation (url) and thumbnail URL (thumb_url)
+            let path = entry.path().context("dirlistjson: Did not expect path to be None when basename is Some").unwrap();
+            // Make path relative to the root
+            let path = path.strip_prefix(parent_path.as_ref());
+            if let Err(ref e) = path {
+                // Since we haven't followed symlinks, this should not happen.
+                // If this does happen, it's a bug.
+                // Still, treat as though an I/O error -> NotFound
+                return Err(UnifiedError::NotFound(
+                    anyhow::anyhow!("dirlistjson: Failed to strip prefix: {}", e)
+                ));
+            }
+            let path = path.unwrap();
+
+            // If regular file, put to files
+            if is_file {
+                // The URL is "/root/{}" --- this allows downloading or viewing
+                let url = Path::new("/root").join(path);
+
+                // Guess whether we can generate a thumbnail
+                // by looking at its extension
+                let can_thumb;
+                let ext = path.extension();
+                if let Some(ext) = ext {
+                    if ext.len() > 4 {
+                        // Longer than jpeg, webp.
+                        can_thumb = false;
+                    } else {
+                        let ext = ext.as_bytes();
+                        can_thumb =
+                            ext.eq_ignore_ascii_case(b"jpg") ||
+                            ext.eq_ignore_ascii_case(b"jpeg") ||
+                            ext.eq_ignore_ascii_case(b"png") ||
+                            ext.eq_ignore_ascii_case(b"gif") ||
+                            ext.eq_ignore_ascii_case(b"webp");
+                    }
+                } else {
+                    can_thumb = false;
+                }
+                // If we can make custom thumbnail, "/thumb/{}".
+                // Otherwise, "/thumb".
+                let thumb_url = if can_thumb {
+                    Path::new("/thumb").join(path)
+                } else {
+                    Path::new("/thumb").to_path_buf()
+                };
+
+                files.push(json!({
+                    "name": name,
+                    "last_modified": lastmod_httpstr,
+                    "url": url,
+                    "thumb_url": thumb_url,
+                }));
+                continue;
+            }
+
+            // If directory, put to directories
+            if is_dir {
+                // The URL is "/user/{}" --- this allows browsing
+                let url = Path::new("/user").join(path);
+
+                tracing::debug!("dirlistjson: url = {:?}, path = {:?}", url, path);
+
+                // Directories have a fixed thumbnail of "/thumbdir"
+                let thumb_url = Path::new("/thumbdir");
+
+                directories.push(json!({
+                    "name": name,
+                    "last_modified": lastmod_httpstr,
+                    "url": url,
+                    "thumb_url": thumb_url,
+                }));
+                continue;
+            }
         }
-        let entry = entry.unwrap();
-        // Check for end of iteration
-        if entry.is_none() {
-            break;
-        }
-        let entry = entry.unwrap();
-        // Retrieve the full path
-        let path = entry.path();
-        // Get the file metadata
-        let metadata = tokio::fs::metadata(&path).await;
-        if metadata.is_err() {
-            continue;
-        }
-        let metadata = metadata.unwrap();
-        // Make sure either a link, file or a directory
-        if !metadata.file_type().is_symlink()
-            && !metadata.file_type().is_file()
-            && !metadata.file_type().is_dir()
-        {
-            continue;
-        }
-        // Last modified
-        let last_modified = metadata
-            .modified()
-            .ok()
-            .and_then(systime2datetime)
-            .map(|dt| {
-                dt.to_rfc3339_opts(
-                    chrono::SecondsFormat::Secs,
-                    // Use Z+.
-                    true,
-                )
-            });
-        // File name
-        let name = entry.file_name().to_string_lossy().to_string();
-        // Path relative to the working directory
-        let relpath = path.strip_prefix(parent_path.as_ref());
-        if relpath.is_err() {
-            continue;
-        }
-        let relpath = relpath.unwrap();
-        // User URL. If dir, /user/{}. If file, /root/{}.
-        let url = if metadata.is_dir() {
-            Path::new("/user").join(relpath)
-        } else {
-            Path::new("/root").join(relpath)
-        };
-        // Decide custom thumbnail by file extension
-        let custom_thumb = path
-            .extension()
-            .map(|s| {
-                s.to_str()
-                    .map(|s| matches!(s, "png" | "jpg" | "jpeg" | "gif"))
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false);
-        // Thumb URL. If no custom thumbnail and if dir, /thumbdir, if file, /thumb.
-        // If custom thumbnail, /thumb/{}.
-        let thumb_url = if custom_thumb {
-            Path::new("/thumb").join(relpath)
-        } else if metadata.is_dir() {
-            Path::new("/thumbdir").to_path_buf()
-        } else {
-            Path::new("/thumb").to_path_buf()
-        };
+
+        // Shuffle the arrays
+        let mut rng = rand::thread_rng();
+        files.shuffle(&mut rng);
+        directories.shuffle(&mut rng);
+
+        // Insert
+        rootobject.insert("files".to_string(), files.into());
+        rootobject.insert("directories".to_string(), directories.into());
+
+        // Check for truncation
+        rootobject.insert("truncated".to_string(), truncated.into());
+
         // Serialize
-        let entryobject = serde_json::json!({
-            "name": name,
-            "url": url.to_string_lossy(),
-            "thumb_url": thumb_url.to_string_lossy(),
-            "last_modified": last_modified,
-        });
-        // Add to the appropriate list
-        if metadata.is_dir() {
-            directories.push(entryobject);
-        } else {
-            files.push(entryobject);
-        }
-    }
+        let json = serde_json::to_string(&rootobject)
+            .context("dirlistjson: can't serialize")?;
 
-    // Shuffle the arrays
-    let mut rng = rand::thread_rng();
-    files.shuffle(&mut rng);
-    directories.shuffle(&mut rng);
-
-    // Insert
-    rootobject.insert("files".to_string(), files.into());
-    rootobject.insert("directories".to_string(), directories.into());
-
-    // Check for truncation
-    rootobject.insert("truncated".to_string(), (n_entries >= N).into());
-
-    // Serialize
-    let json = serde_json::to_string(&rootobject)
-        .context("dirlistjson: can't serialize")?;
-
-    Ok(json)
+        Ok(json)
+    })
+    .await
+    .context("dirlistjson: join error")?
 }

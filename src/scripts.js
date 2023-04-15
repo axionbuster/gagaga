@@ -24,7 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
             // Redirect (soft).
             window.location.pathname = '/user';
             // Unreachable.
-            throw new Error('(gagaga) getLocation: Invalid path');
+            throw new Error(`(gagaga) getLocation: Invalid path ${url}`);
         }
     }
 
