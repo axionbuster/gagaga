@@ -20,7 +20,6 @@ body {
 .container {
     max-width: 900px;
     margin: 0 auto;
-    padding: 20px;
 }
 
 button {
@@ -32,23 +31,31 @@ table {
     border-collapse: collapse;
 }
 
-th, td {
-    padding: 10px;
+th,
+td {
+    padding: 0 10px;
     border: 1px solid var(--text-color);
-    text-align: left;
-}
-
-th {
-    cursor: pointer;
-}
-
-tr:hover {
-    background-color: rgba(0, 0, 0, 0.1);
+    text-align: start;
 }
 
 #tableBody img {
-    width: 128px;
-    height: 128px;
     object-fit: contain;
     background-size: contain;
+}
+
+#tableBody tr td:first-child {
+    position: relative;
+    text-align: right;
+}
+
+#tableBody tr td:first-child::before {
+    content: "";
+    display: inline-block;
+    height: 100%;
+    vertical-align: middle;
+}
+
+#tableBody tr td:first-child img {
+    display: inline-block;
+    vertical-align: middle;
 }

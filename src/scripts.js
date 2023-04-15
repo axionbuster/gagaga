@@ -1,6 +1,51 @@
 // ChatGPT
 // axionbuster
 
+// Format Date like "just now", "a minute ago",
+// "2 hours ago", "yesterday", "a week ago", "2 weeks ago",
+// "a month ago", "2 months ago", "a year ago", "2 years ago", "Jan 1, 2021", etc.
+// Assume US English.
+// Strategy "A"
+function shortFormatDateA_en_US(date) {
+    const now = new Date();
+    const diffInSeconds = Math.floor((now - date) / 1000);
+    const diffInMinutes = Math.floor(diffInSeconds / 60);
+    const diffInHours = Math.floor(diffInMinutes / 60);
+    const diffInDays = Math.floor(diffInHours / 24);
+    const diffInWeeks = Math.floor(diffInDays / 7);
+
+    if (diffInSeconds < 600) {
+        return "just now";
+    } else if (diffInMinutes < 60) {
+        if (diffInMinutes === 1) {
+            return "a minute ago";
+        }
+        return `${diffInMinutes} minutes ago`;
+    } else if (diffInHours < 12) {
+        if (diffInHours === 1) {
+            return "an hour ago";
+        }
+        return `${diffInHours} hours ago`;
+    } else if (diffInHours >= 12 && diffInHours < 24 && date.getDate() === now.getDate()) {
+        return "today";
+    } else if (diffInHours >= 12 && diffInHours < 24 && date.getDate() !== now.getDate()) {
+        // Yesterday and less than 24 hours ago.
+        return "yesterday";
+    } else if (diffInDays <= 30) {
+        if (diffInWeeks <= 1) {
+            if (diffInDays === 1) {
+                // Yesterday and 24 hours ago or later.
+                return "yesterday";
+            }
+            return `${diffInDays} days ago`;
+        }
+        return `${diffInWeeks} weeks ago`;
+    } else {
+        const options = { year: 'numeric', month: 'short', day: 'numeric' };
+        return date.toLocaleDateString('en-US', options);
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     const tableBody = document.getElementById('tableBody');
 
@@ -120,8 +165,8 @@ incompatible. Please update your client.`);
             imgThumb.classList.add('thumb');
             imgThumb.src = fsObject.thumb_url;
             imgThumb.alt = ''; // thumbnail; decorative
-            imgThumb.width = 100;
-            imgThumb.height = 100;
+            imgThumb.width = 32;
+            imgThumb.height = 32;
             // Lazy load the thumbnail with your good old strategy,
             // background-image + loading=lazy + onload.
             // Remove CSS background-image (placeholder) once loaded.
@@ -140,7 +185,7 @@ incompatible. Please update your client.`);
             td2.appendChild(a);
             tr.appendChild(td2);
             const td3 = document.createElement('td');
-            td3.textContent = new Date(fsObject.last_modified).toLocaleString();
+            td3.textContent = shortFormatDateA_en_US(new Date(fsObject.last_modified));
             tr.appendChild(td3);
             tableBody.appendChild(tr);
         }
