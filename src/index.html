@@ -12,33 +12,7 @@
 <body>
     <div class="container">
         <h1>File Server</h1>
-        <!--
-            Meant to be a grid layout, but used table for simplicity of
-            getting started. Will change to grid later.
-        -->
-        <table id="fileTable">
-            <thead>
-                <tr>
-                    <th>Thumb</th>
-                    <th>Name</th>
-                    <th>Last Modified</th>
-                </tr>
-            </thead>
-            <tbody id="tableBody">
-                <!-- root (/) -->
-                <tr id="rootRow">
-                    <td><img src="/thumbdir" alt="root" width="32" height="32"></td>
-                    <td><a id="rootRowLink" href="/">/</a></td>
-                    <td></td>
-                </tr>
-                <!-- back (..) -->
-                <tr id="backRow">
-                    <td><img src="/thumbdir" alt="back" width="32" height="32"></td>
-                    <td><a id="backRowLink" href="#">..</a></td>
-                    <td></td>
-                </tr>
-            </tbody>
-        </table>
+        <ul id="listfile"></ul>
     </div>
     <script src="/scripts.js"></script>
 </body>

@@ -46,28 +46,176 @@ function shortFormatDateA_en_US(date) {
     }
 }
 
+// Summarize a filesystem object and add it to the table.
+function showEntry(fsObject) {
+    // <li>
+    //     <div class="file">
+    //         <a class="thumb" href="{url}">
+    //              <img src="{thumb_url}" alt="" width="32" height="32">
+    //         </a>
+    //         <div class="info">
+    //             <a class="filename" href="{url}">{name}</a>
+    //             <div class="byline">{last_modified}</div>
+    //         </div>
+    //     </div>
+    // </li>
+
+    const { name, last_modified, url, thumb_url } = fsObject;
+    const showLastModified = shortFormatDateA_en_US(new Date(last_modified));
+
+    const li = document.createElement("li");
+    const file = document.createElement("div");
+    file.classList.add("file");
+    const thumb = document.createElement("a");
+    thumb.classList.add("thumb");
+    thumb.href = url;
+    const img = document.createElement("img");
+    img.src = thumb_url;
+    img.alt = "";
+    img.width = 32;
+    img.height = 32;
+    thumb.appendChild(img);
+    file.appendChild(thumb);
+    const info = document.createElement("div");
+    info.classList.add("info");
+    const filename = document.createElement("a");
+    filename.classList.add("filename");
+    filename.href = url;
+    filename.textContent = name;
+    info.appendChild(filename);
+    const byline = document.createElement("div");
+    byline.classList.add("byline");
+    byline.textContent = showLastModified;
+    info.appendChild(byline);
+    file.appendChild(info);
+    li.appendChild(file);
+
+    // Wow, I really don't want to do this.
+    // See, this is why there are such things as frameworks.
+    // This is messed up.
+    return li;
+}
+
+// Create a new file item, representing the root (/) directory.
+function showRoot(uList) {
+    // <li>
+    //     <div class="file">
+    //         <a class="thumb" href="/user">
+    //              <img src="/thumbdir" alt="" width="32" height="32">
+    //         </a>
+    //         <div class="info">
+    //             <a class="filename" href="/user">/</a>
+    //         </div>
+    //     </div>
+    // </li>
+
+    const li = document.createElement("li");
+    const file = document.createElement("div");
+    file.classList.add("file");
+    const thumb = document.createElement("a");
+    thumb.classList.add("thumb");
+    thumb.href = "/user";
+    const img = document.createElement("img");
+    img.src = "/thumbdir";
+    img.alt = "";
+    img.width = 32;
+    img.height = 32;
+    thumb.appendChild(img);
+    file.appendChild(thumb);
+    const info = document.createElement("div");
+    info.classList.add("info");
+    const filename = document.createElement("a");
+    filename.classList.add("filename");
+    filename.href = "/user";
+    filename.textContent = "/";
+    info.appendChild(filename);
+    file.appendChild(info);
+    li.appendChild(file);
+
+    return li;
+}
+
+// And, I need to do that all over again. No!
+function showParent(parentUrl) {
+    // <li>
+    //     <div class="file">
+    //         <a class="thumb" href="{parentUrl}">
+    //              <img src="/thumbdir" alt="" width="32" height="32">
+    //         </a>
+    //         <div class="info">
+    //             <a class="filename" href="/user">..</a>
+    //         </div>
+    //     </div>
+    // </li>
+
+    const li = document.createElement("li");
+    const file = document.createElement("div");
+    file.classList.add("file");
+    const thumb = document.createElement("a");
+    thumb.classList.add("thumb");
+    thumb.href = parentUrl;
+    const img = document.createElement("img");
+    img.src = "/thumbdir";
+    img.alt = "";
+    img.width = 32;
+    img.height = 32;
+    thumb.appendChild(img);
+    file.appendChild(thumb);
+    const info = document.createElement("div");
+    info.classList.add("info");
+    const filename = document.createElement("a");
+    filename.classList.add("filename");
+    filename.href = parentUrl;
+    filename.textContent = "..";
+    info.appendChild(filename);
+    file.appendChild(info);
+    li.appendChild(file);
+
+    return li;
+}
+
+// Something went wrong as an item
+function showError(errorString) {
+    // <li>{errorString}</li>
+
+    const li = document.createElement("li");
+    li.textContent = errorString;
+
+    return li;
+}
+
+// That was a lot of work.
+// Later, I'll refactor that when I choose a framework.
+// But for now, I'm just going to get this working.
+
 document.addEventListener('DOMContentLoaded', () => {
-    const tableBody = document.getElementById('tableBody');
+    const listFile = document.getElementById("listfile");
+
+    // Create root and parent links.
+    const rootLink = showRoot(listFile);
+    listFile.appendChild(rootLink);
+    const parentLink = showParent(listFile, "/user");
+    listFile.appendChild(parentLink);
 
     // Find the extra path.
-    // If invalid, redirect to '/user'.
+    // If invalid, redirect to "/user"
     let extraPath;
     {
         const url = window.location.pathname;
-        const checkregex = /^\/user/; // URL must start with '/user'
+        const checkregex = /^\/user/; // URL must start with "/user"
         const where = url.search(checkregex);
         if (where !== -1) {
-            // Find the extra path component that follows '/user'.
+            // Find the extra path component that follows "/user".
             const extra = url.substring(where + 5);
             extraPath = extra;
 
-            // If empty, then '/'.
-            if (extraPath === '') {
-                extraPath = '/';
+            // If empty, then "/".
+            if (extraPath === "") {
+                extraPath = "/";
             }
         } else {
             // Redirect (soft).
-            window.location.pathname = '/user';
+            window.location.pathname = "/user";
             // Unreachable.
             throw new Error(`(gagaga) getLocation: Invalid path ${url}`);
         }
@@ -77,49 +225,40 @@ document.addEventListener('DOMContentLoaded', () => {
     {
         const text = `File Server (${extraPath})`;
         document.title = text;
-        const h1 = document.getElementsByTagName('h1')[0];
+        const h1 = document.getElementsByTagName("h1")[0];
         h1.textContent = text;
     }
 
-    // Disable the back (..) row if and only if we are at the root.
+    // Disable the back (..) link if and only if we are at the root.
+    // FIXME.
     if (extraPath === '/') {
-        const backRow = document.getElementById('backRow');
-        backRow.style = 'display: none;';
+        parentLink.classList.add("hide");
     } else {
-        const backRow = document.getElementById('backRow');
-        backRow.style = '';
+        parentLink.classList.remove("hide");
     }
 
     // Do the same with the root (/) row button.
     if (extraPath === '/') {
-        const rootRow = document.getElementById('rootRow');
-        rootRow.style = 'display: none;';
+        rootLink.classList.add("hide");
     } else {
-        const rootRow = document.getElementById('rootRow');
-        rootRow.style = '';
+        rootLink.classList.remove("hide");
     }
 
     // Inject the back row (..) link.
     {
-        const backRow = document.getElementById('backRowLink');
         const parent = extraPath.substring(0, extraPath.lastIndexOf('/'));
-        backRow.href = '/user' + parent;
+        const thumb = parentLink.getElementsByClassName("thumb")[0];
+        thumb.href = "/user" + parent;
+        const filename = parentLink.getElementsByClassName("filename")[0];
+        filename.href = "/user" + parent;
     }
 
-    const loadData = async (extraPath) => {
+    const loadAndShow = async (extraPath) => {
         const response = await fetch('/root' + extraPath);
 
         if (!response.ok) {
-            // Let the user know that something went wrong
-            // as a row in the table corresponding to the
-            // HTTP status code and the status text.
-            const tr = document.createElement('tr');
-            const td = document.createElement('td');
-            td.classList.add('error');
-            td.colSpan = 3;
-            td.textContent = `HTTP ${response.status}: ${response.statusText}`;
-            tr.appendChild(td);
-            tableBody.appendChild(tr);
+            const li = showError(`Error: ${response.status} ${response.statusText}`);
+            listFile.appendChild(li);
             return;
         }
 
@@ -145,51 +284,14 @@ incompatible. Please update your client.`);
 
         // Add the rows to the table.
         for (const directory of directories) {
-            addRowsToTable(directory);
+            let li = showEntry(directory);
+            listFile.appendChild(li);
         }
         for (const file of files) {
-            addRowsToTable(file);
-        }
-
-        // Summarize a filesystem object and add it to the table.
-        function addRowsToTable(fsObject) {
-            // <tr>
-            //  <td><img ... /></td>        (thumbnail)
-            //  <td><a ...>...</a></td>     (name and link)
-            //  <td>...</td>                (last modified)
-            // </tr>
-
-            const tr = document.createElement('tr');
-            const td1 = document.createElement('td');
-            const imgThumb = document.createElement('img');
-            imgThumb.classList.add('thumb');
-            imgThumb.src = fsObject.thumb_url;
-            imgThumb.alt = ''; // thumbnail; decorative
-            imgThumb.width = 32;
-            imgThumb.height = 32;
-            // Lazy load the thumbnail with your good old strategy,
-            // background-image + loading=lazy + onload.
-            // Remove CSS background-image (placeholder) once loaded.
-            imgThumb.loading = 'lazy';
-            imgThumb.style = 'background-image: url(/thumbimg);';
-            imgThumb.onload = () => {
-                // Remove imgThumb.style once loaded (attribute 'complete' is set).
-                imgThumb.removeAttribute('style');
-            };
-            td1.appendChild(imgThumb);
-            tr.appendChild(td1);
-            const td2 = document.createElement('td');
-            const a = document.createElement('a');
-            a.href = fsObject.url;
-            a.textContent = fsObject.name;
-            td2.appendChild(a);
-            tr.appendChild(td2);
-            const td3 = document.createElement('td');
-            td3.textContent = shortFormatDateA_en_US(new Date(fsObject.last_modified));
-            tr.appendChild(td3);
-            tableBody.appendChild(tr);
+            let li = showEntry(file);
+            listFile.appendChild(li);
         }
     };
 
-    loadData(extraPath);
+    loadAndShow(extraPath);
 });
