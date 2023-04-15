@@ -6,14 +6,16 @@
 
 // Some commands
 
-use std::{
-    ffi::OsStr,
-    path::{Path, PathBuf},
-};
-
-use tokio::io::{AsyncRead, AsyncSeek};
+use std::ffi::OsStr;
 
 use crate::primitive::{DateTime, Result};
+
+// Reexport
+
+// Don't know if it is a good idea to export
+// tokio::io::AsyncReadExt and tokio::io::AsyncSeekExt.
+pub use std::path::{Path, PathBuf};
+pub use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
 
 /// File type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

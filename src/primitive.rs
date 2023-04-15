@@ -1,11 +1,20 @@
-//! Primitives
+//! Primitives and essential dependencies
 
 use std::{
     fmt::{Display, Formatter},
     time::SystemTime,
 };
 
+// Reexport or redefine types.
+
+/// UTC DateTime
 pub type DateTime = chrono::DateTime<chrono::Utc>;
+
+/// Anyhow error
+pub use anyhow;
+
+/// Tracing
+pub use tracing;
 
 /// Attempt to convert a [`SystemTime`] (returned on file statistics calls)
 /// to the DateTime type. How inconvenient is this?
