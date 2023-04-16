@@ -66,7 +66,7 @@ impl Display for UnifiedError {
 impl axum::response::IntoResponse for UnifiedError {
     /// Allow to be rendered as an Axum Response using hard-coded &'static str JSON strings.
     fn into_response(self) -> axum::response::Response {
-        use http::StatusCode;
+        use axum::http::StatusCode;
 
         match self {
             UnifiedError::NotFound(_) => {

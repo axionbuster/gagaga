@@ -1,6 +1,6 @@
 [package]
 name = "gagaga"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -12,15 +12,18 @@ async-trait = "0.1.68"
 # macros -- debug type errors
 axum = { version = "0.6.12", features = ["tracing", "macros"] }
 chrono = "0.4.24"
-http = "0.2.9"
+clap = { version = "4.2.2", features = ["derive"] }
 image = { version = "0.24.6", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 mime_guess = "2.0.4"
 rand = "0.8.5"
+sailfish = "0.6.1"
 serde = { version = "1.0.159", features = ["derive"] }
 serde_json = "1.0.95"
 thiserror = "1.0.40"
 tokio = { version = "1.27.0", features = ["full"] }
-tower-http = { version = "0.4.0", features = ["trace"] } # tracing -- useful logging for axum
+# tracing -- useful logging for axum
+# cors -- CORS support
+tower-http = { version = "0.4.0", features = ["trace", "cors"] }
 tracing = "0.1.37"
 tracing-subscriber = "0.3.16"
 

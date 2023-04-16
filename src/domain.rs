@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use rand::seq::SliceRandom;
-use serde_json::json;
+use serde_json::{json, Value};
 use tracing::instrument;
 
 use crate::primitive::*;
@@ -82,16 +82,10 @@ pub async fn dirlistjson<const N: usize>(
     path: &RealPath,
     parent_path: &RealPath,
     vfs: impl vfs::VfsV1,
-) -> Result<String> {
+) -> Result<Value> {
     let path = path.clone();
     let parent_path = parent_path.clone();
     tokio::task::spawn_blocking(move || {
-        const API_VERSION: &str = "012";
-        let mut rootobject = serde_json::Map::new();
-
-        // Add the API version
-        rootobject.insert("version".to_string(), API_VERSION.into());
-
         // Files and directories are collected separately, then shuffled.
         let mut files = Vec::new();
         let mut directories = Vec::new();
@@ -170,8 +164,8 @@ pub async fn dirlistjson<const N: usize>(
 
             // If regular file, put to files
             if is_file {
-                // The URL is "/root/{}" --- this allows downloading or viewing
-                let url = Path::new("/root").join(path);
+                // The URL is "/{}" --- this allows downloading or viewing
+                let url = Path::new("/").join(path);
 
                 // Guess whether we can generate a thumbnail
                 // by looking at its extension
@@ -212,8 +206,8 @@ pub async fn dirlistjson<const N: usize>(
 
             // If directory, put to directories
             if is_dir {
-                // The URL is "/user/{}" --- this allows browsing
-                let url = Path::new("/user").join(path);
+                // The URL is "/{}" --- this allows browsing
+                let url = Path::new("/").join(path);
 
                 // Directories have a fixed thumbnail of "/thumbdir"
                 let thumb_url = Path::new("/thumbdir");
@@ -233,18 +227,11 @@ pub async fn dirlistjson<const N: usize>(
         files.shuffle(&mut rng);
         directories.shuffle(&mut rng);
 
-        // Insert
-        rootobject.insert("files".to_string(), files.into());
-        rootobject.insert("directories".to_string(), directories.into());
-
-        // Check for truncation
-        rootobject.insert("truncated".to_string(), truncated.into());
-
-        // Serialize
-        let json = serde_json::to_string(&rootobject)
-            .context("dirlistjson: can't serialize")?;
-
-        Ok(json)
+        Ok(json!({
+            "files": files,
+            "directories": directories,
+            "truncated": truncated,
+        }))
     })
     .await
     .context("dirlistjson: join error")?

@@ -1,6 +1,12 @@
 // ChatGPT
 // axionbuster
 
+// Origin of the listing service. To be filled by a templating engine.
+const listOrigin = "<%= list_origin %>";
+
+// Origin of the thumbnail service. Same, to be filled by a templating engine.
+const thumbOrigin = "<%= thumb_origin %>";
+
 // Format Date like "just now", "a minute ago",
 // "2 hours ago", "yesterday", "a week ago", "2 weeks ago",
 // "a month ago", "2 months ago", "a year ago", "2 years ago", "Jan 1, 2021", etc.
@@ -46,54 +52,95 @@ function shortFormatDateA_en_US(date) {
     }
 }
 
-// Summarize a filesystem object and add it to the table.
-function showEntry(fsObject) {
-    // <li>
-    //     <div class="file">
-    //         <a class="thumb" href="{url}">
-    //              <img src="{thumb_url}" alt="" width="32" height="32">
-    //         </a>
-    //         <div class="info">
-    //             <a class="filename" href="{url}">{name}</a>
-    //             <div class="byline">{last_modified}</div>
-    //         </div>
-    //     </div>
-    // </li>
+// Just short of a custom HTML tag.
+// A class to represent a filesystem object.
+class FsObject {
+    // url: The URL of the object. Don't include the origin.
+    // thumbUrl: The URL of the thumbnail of the object. Don't include the origin.
+    // name: The name of the object.
+    // lastModified: The last modified date of the object. null if not applicable.
+    // (never use undefined for any of them.)
+    constructor(url, thumbUrl, name, lastModified, directory) {
+        // If any is undefined, throw an error.
+        if (typeof url === "undefined") {
+            throw new Error("url is undefined");
+        }
+        if (typeof thumbUrl === "undefined") {
+            throw new Error("thumbUrl is undefined");
+        }
+        if (typeof name === "undefined") {
+            throw new Error("name is undefined");
+        }
+        if (typeof lastModified === "undefined") {
+            throw new Error("lastModified is undefined");
+        }
+        if (typeof directory === "undefined") {
+            throw new Error("directory is undefined");
+        }
 
-    const { name, last_modified, url, thumb_url } = fsObject;
-    const showLastModified = shortFormatDateA_en_US(new Date(last_modified));
+        this.url = url;
+        this.thumbUrl = thumbUrl;
+        this.name = name;
+        this.lastModified = lastModified;
+        this.directory = directory
+    }
 
-    const li = document.createElement("li");
-    const file = document.createElement("div");
-    file.classList.add("file");
-    const thumb = document.createElement("a");
-    thumb.classList.add("thumb");
-    thumb.href = url;
-    const img = document.createElement("img");
-    img.src = thumb_url;
-    img.alt = "";
-    img.width = 32;
-    img.height = 32;
-    thumb.appendChild(img);
-    file.appendChild(thumb);
-    const info = document.createElement("div");
-    info.classList.add("info");
-    const filename = document.createElement("a");
-    filename.classList.add("filename");
-    filename.href = url;
-    filename.textContent = name;
-    info.appendChild(filename);
-    const byline = document.createElement("div");
-    byline.classList.add("byline");
-    byline.textContent = showLastModified;
-    info.appendChild(byline);
-    file.appendChild(info);
-    li.appendChild(file);
+    // Render
+    render() {
+        // <li>
+        //     <div class="file">
+        //         <a class="thumb" href="{url}">
+        //              <img src="{thumb_url}" alt="" width="32" height="32">
+        //         </a>
+        //         <div class="info">
+        //             <a class="filename" href="{url}">{name}</a>
+        //             <div class="byline">{last_modified}</div>
+        //         </div>
+        //     </div>
+        // </li>
 
-    // Wow, I really don't want to do this.
-    // See, this is why there are such things as frameworks.
-    // This is messed up.
-    return li;
+        const lastModifiedStr = shortFormatDateA_en_US(new Date(this.last_modified));
+
+        // Real URLs
+        // Prefix
+        const prefix = this.directory ? "/user" : listOrigin;
+        const realUrl = prefix + this.url;
+        const realThumbUrl = thumbOrigin + this.thumbUrl;
+
+        const li = document.createElement("li");
+        const file = document.createElement("div");
+        file.classList.add("file");
+        const thumb = document.createElement("a");
+        thumb.classList.add("thumb");
+        thumb.href = realUrl;
+        const img = document.createElement("img");
+        img.src = realThumbUrl;
+        img.alt = "";
+        img.width = 32;
+        img.height = 32;
+        thumb.appendChild(img);
+        file.appendChild(thumb);
+        const info = document.createElement("div");
+        info.classList.add("info");
+        const filename = document.createElement("a");
+        filename.classList.add("filename");
+        filename.href = realUrl;
+        filename.textContent = this.name;
+        info.appendChild(filename);
+        if (this.last_modified !== null) {
+            const byline = document.createElement("div");
+            byline.classList.add("byline");
+            byline.textContent = lastModifiedStr;
+            info.appendChild(byline);
+        }
+        file.appendChild(info);
+        li.appendChild(file);
+
+        // Wow, I really don't want to do this.
+        // See, this is why there are such things as frameworks.
+        // This is messed up.
+        return li;
+    }
 }
 
 // Create a new file item, representing the root (/) directory.
@@ -109,33 +156,12 @@ function showRoot(uList) {
     //     </div>
     // </li>
 
-    const li = document.createElement("li");
-    const file = document.createElement("div");
-    file.classList.add("file");
-    const thumb = document.createElement("a");
-    thumb.classList.add("thumb");
-    thumb.href = "/user";
-    const img = document.createElement("img");
-    img.src = "/thumbdir";
-    img.alt = "";
-    img.width = 32;
-    img.height = 32;
-    thumb.appendChild(img);
-    file.appendChild(thumb);
-    const info = document.createElement("div");
-    info.classList.add("info");
-    const filename = document.createElement("a");
-    filename.classList.add("filename");
-    filename.href = "/user";
-    filename.textContent = "/";
-    info.appendChild(filename);
-    file.appendChild(info);
-    li.appendChild(file);
+    let item = new FsObject("/", "/thumbdir", "/", null, true);
+    let li = item.render();
 
     return li;
 }
 
-// And, I need to do that all over again. No!
 function showParent(parentUrl) {
     // <li>
     //     <div class="file">
@@ -148,28 +174,8 @@ function showParent(parentUrl) {
     //     </div>
     // </li>
 
-    const li = document.createElement("li");
-    const file = document.createElement("div");
-    file.classList.add("file");
-    const thumb = document.createElement("a");
-    thumb.classList.add("thumb");
-    thumb.href = parentUrl;
-    const img = document.createElement("img");
-    img.src = "/thumbdir";
-    img.alt = "";
-    img.width = 32;
-    img.height = 32;
-    thumb.appendChild(img);
-    file.appendChild(thumb);
-    const info = document.createElement("div");
-    info.classList.add("info");
-    const filename = document.createElement("a");
-    filename.classList.add("filename");
-    filename.href = parentUrl;
-    filename.textContent = "..";
-    info.appendChild(filename);
-    file.appendChild(info);
-    li.appendChild(file);
+    let item = new FsObject(parentUrl, "/thumbdir", "..", null, true);
+    let li = item.render();
 
     return li;
 }
@@ -190,12 +196,6 @@ function showError(errorString) {
 
 document.addEventListener('DOMContentLoaded', () => {
     const listFile = document.getElementById("listfile");
-
-    // Create root and parent links.
-    const rootLink = showRoot(listFile);
-    listFile.appendChild(rootLink);
-    const parentLink = showParent(listFile, "/user");
-    listFile.appendChild(parentLink);
 
     // Find the extra path.
     // If invalid, redirect to "/user"
@@ -229,32 +229,23 @@ document.addEventListener('DOMContentLoaded', () => {
         h1.textContent = text;
     }
 
-    // Disable the back (..) link if and only if we are at the root.
-    // FIXME.
-    if (extraPath === '/') {
-        parentLink.classList.add("hide");
-    } else {
-        parentLink.classList.remove("hide");
-    }
-
-    // Do the same with the root (/) row button.
-    if (extraPath === '/') {
-        rootLink.classList.add("hide");
-    } else {
-        rootLink.classList.remove("hide");
-    }
-
     // Inject the back row (..) link.
-    {
+    // Disable the back (..) link if and only if we are at the root.
+    if (extraPath !== "/") {
         const parent = extraPath.substring(0, extraPath.lastIndexOf('/'));
-        const thumb = parentLink.getElementsByClassName("thumb")[0];
-        thumb.href = "/user" + parent;
-        const filename = parentLink.getElementsByClassName("filename")[0];
-        filename.href = "/user" + parent;
+        const li = showParent(parent);
+        listFile.appendChild(li);
+    }
+
+    // Inject the root link.
+    if (extraPath !== "/") {
+        const li = showRoot();
+        listFile.appendChild(li);
     }
 
     const loadAndShow = async (extraPath) => {
-        const response = await fetch('/root' + extraPath);
+        // Make a GET request to the server to get the list of files.
+        const response = await fetch(`${listOrigin}${extraPath}`);
 
         if (!response.ok) {
             const li = showError(`Error: ${response.status} ${response.statusText}`);
@@ -270,13 +261,14 @@ document.addEventListener('DOMContentLoaded', () => {
         // So, check for major version 0. Incompatible with future versions.
         // Also: since we are in major 0, the minor version should be
         // checked, too.
-        if (json.version[0] !== '0' || json.version[1] !== '1') {
-            throw new Error(`Client supports 0.1.*. Server: (json.version = \"${json.version}\")
+        if (json.version[0] !== '0' || json.version[1] !== '2') {
+            throw new Error(`Client supports 0.2.*. Server: (json.version = \"${json.version}\")
 incompatible. Please update your client.`);
         }
 
-        const files = json.files ? json.files : [];
-        const directories = json.directories ? json.directories : [];
+        const listing = json.listing ? json.listing : [];
+        const files = listing.files ? listing.files : [];
+        const directories = listing.directories ? listing.directories : [];
 
         // Sort by last modified date, from newest to oldest
         directories.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified));
@@ -284,11 +276,14 @@ incompatible. Please update your client.`);
 
         // Add the rows to the table.
         for (const directory of directories) {
-            let li = showEntry(directory);
+            // let li = showEntry(directory);
+            let item = new FsObject(directory.url, directory.thumb_url, directory.name, directory.last_modified, true);
+            let li = item.render();
             listFile.appendChild(li);
         }
         for (const file of files) {
-            let li = showEntry(file);
+            let item = new FsObject(file.url, file.thumb_url, file.name, file.last_modified, false);
+            let li = item.render();
             listFile.appendChild(li);
         }
     };
