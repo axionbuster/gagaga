@@ -12,7 +12,18 @@ const thumbOrigin = "<%= thumb_origin %>";
 // "a month ago", "2 months ago", "a year ago", "2 years ago", "Jan 1, 2021", etc.
 // Assume US English.
 // Strategy "A"
-function shortFormatDateA_en_US(date) {
+function shortFormatDateA_en_US(dateInput) {
+    // Guard against some typing errors.
+    // I should use TypeScript, though.
+    if ((typeof dateInput === "undefined") || (dateInput === null)) {
+        throw new Error("date is undefined or null");
+    }
+    if (!(dateInput instanceof Date) && !(typeof dateInput === "string")) {
+        throw new Error("date is not a Date or a String");
+    }
+    // Convert to Date if it's a String.
+    let date = (typeof dateInput === "string") ? new Date(dateInput) : dateInput;
+
     const now = new Date();
     const diffInSeconds = Math.floor((now - date) / 1000);
     const diffInMinutes = Math.floor(diffInSeconds / 60);
@@ -99,8 +110,6 @@ class FsObject {
         //     </div>
         // </li>
 
-        const lastModifiedStr = shortFormatDateA_en_US(new Date(this.last_modified));
-
         // Real URLs
         // Prefix
         const prefix = this.directory ? "/user" : listOrigin;
@@ -127,7 +136,8 @@ class FsObject {
         filename.href = realUrl;
         filename.textContent = this.name;
         info.appendChild(filename);
-        if (this.last_modified !== null) {
+        if (this.lastModified !== null) {
+            const lastModifiedStr = shortFormatDateA_en_US(this.lastModified);
             const byline = document.createElement("div");
             byline.classList.add("byline");
             byline.textContent = lastModifiedStr;
