@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 
-use crate::primitive::{systime2datetime, Result};
+use crate::primitive::{DateTime, Result};
 use crate::vfs::{FileStat, FileType, VfsV1};
 
 /// VFS implementation A.
@@ -33,7 +33,7 @@ impl VfsV1 for VfsImplA {
     ) -> Result<FileStat> {
         // Query the file system for the metadata.
         let meta = tokio::fs::metadata(path).await?;
-        let lastmod = meta.modified().ok().and_then(systime2datetime);
+        let lastmod = meta.modified().ok().and_then(DateTime::from_systemtime);
         let size = meta.len();
         let file_type = if meta.is_file() {
             FileType::RegularFile
@@ -59,7 +59,7 @@ impl VfsV1 for VfsImplA {
     ) -> Result<FileStat> {
         // Query the file system for the metadata.
         let meta = std::fs::metadata(path)?;
-        let lastmod = meta.modified().ok().and_then(systime2datetime);
+        let lastmod = meta.modified().ok().and_then(DateTime::from_systemtime);
         let size = meta.len();
         let file_type = if meta.is_file() {
             FileType::RegularFile
@@ -118,7 +118,8 @@ impl VfsV1 for VfsImplA {
                 continue;
             }
             let meta = meta.unwrap();
-            let lastmod = meta.modified().ok().and_then(systime2datetime);
+            let lastmod =
+                meta.modified().ok().and_then(DateTime::from_systemtime);
             let size = meta.len();
             let stat = FileStat::new(Some(path), lastmod, size, file_type);
             entries.push(stat);

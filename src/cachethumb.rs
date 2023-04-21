@@ -136,8 +136,7 @@ pub fn spawn_cache_process() -> Mpsc {
             match msg {
                 CacheMessage::Insert(path, data) => {
                     tracing::trace!("Got insert");
-                    let now = chrono::Utc::now();
-                    cache.insert(path, (now, data));
+                    cache.insert(path, (DateTime::now(), data));
                 }
                 CacheMessage::Get(path, reply_to) => {
                     // Inspect the hashmap and then the filesystem to determine freshness.
@@ -172,7 +171,6 @@ pub fn spawn_cache_process() -> Mpsc {
 
                     // Compare against memory.
                     let (clastmod, data) = cache.get(&path).unwrap();
-                    let clastmod = *clastmod;
 
                     // Decide.
                     if flastmod > clastmod {
@@ -184,7 +182,7 @@ pub fn spawn_cache_process() -> Mpsc {
                         tracing::trace!("Get {path:?} was fresh");
                         reply_to
                             .send(Some(CacheResponse {
-                                lastmod: clastmod,
+                                lastmod: clastmod.clone(),
                                 thumbnail: data.clone(),
                             }))
                             .unwrap();

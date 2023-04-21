@@ -110,8 +110,7 @@ pub async fn serve_thumb<B, const TW: u32, const TH: u32>(
             if ulastmod.is_ok() {
                 // Still deciding...
                 let ulastmod = ulastmod.unwrap();
-                let ulastmod =
-                    chrono::DateTime::parse_from_rfc2822(ulastmod).unwrap();
+                let ulastmod = DateTime::from_rfc2822(ulastmod).unwrap();
                 let send = clastmod > &ulastmod;
 
                 if send {
@@ -145,7 +144,7 @@ pub async fn serve_thumb<B, const TW: u32, const TH: u32>(
             // Send the thumbnail to the cache.
             cache.ins(&userpathreal, thumb.clone());
             cachethumb::CacheResponse {
-                lastmod: chrono::Utc::now(),
+                lastmod: DateTime::now(),
                 thumbnail: thumb,
             }
         }
@@ -154,7 +153,7 @@ pub async fn serve_thumb<B, const TW: u32, const TH: u32>(
     let response = axum::response::Response::builder()
         .header("Content-Type", "image/jpeg")
         .header("Cache-Control", "public, no-cache")
-        .header("Last-Modified", thumb.lastmod.to_rfc2822())
+        .header("Last-Modified", thumb.lastmod.rfc2822())
         .body(axum::body::Body::from(thumb.thumbnail))
         .context("thumb jpeg send make response")?
         .into_response();

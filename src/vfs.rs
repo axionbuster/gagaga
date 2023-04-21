@@ -65,8 +65,8 @@ impl FileStat {
     }
 
     /// Get the last modified time, if it exists
-    pub fn lastmod(&self) -> Option<DateTime> {
-        self.lastmod
+    pub fn lastmod(&self) -> Option<&DateTime> {
+        self.lastmod.as_ref()
     }
 
     /// Get the base name of the file as OsStr

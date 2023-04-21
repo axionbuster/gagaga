@@ -146,7 +146,7 @@ pub async fn dirlistjson<const N: usize>(
             let lastmod = lastmod.unwrap();
             // Use RFC3339 format for last modified time using
             // Z+ for timezone ("true")
-            let lastmod_httpstr = lastmod.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+            let lastmod_httpstr = lastmod.rfc3339z();
 
             // Calculate the navigation (url) and thumbnail URL (thumb_url)
             let path = entry.path().context("dirlistjson: Did not expect path to be None when basename is Some").unwrap();

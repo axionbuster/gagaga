@@ -8,29 +8,54 @@ use std::{
 // Reexport or redefine types.
 
 /// UTC DateTime
-pub type DateTime = chrono::DateTime<chrono::Utc>;
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DateTime(chrono::DateTime<chrono::Utc>);
+
+impl DateTime {
+    /// Get the UTC now
+    pub fn now() -> Self {
+        Self(chrono::Utc::now())
+    }
+
+    /// Return an RFC3339 string (including Z time zone)
+    pub fn rfc3339z(&self) -> String {
+        self.0.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    }
+
+    /// Return an RFC2822 string
+    pub fn rfc2822(&self) -> String {
+        self.0.to_rfc2822()
+    }
+
+    /// Parse one from an RFC2822 string
+    pub fn from_rfc2822(s: &str) -> Option<Self> {
+        chrono::DateTime::parse_from_rfc2822(s)
+            .ok()
+            .map(|d| Self(d.with_timezone(&chrono::Utc)))
+    }
+
+    /// Parse one from a [`SystemTime`] (returned on file statistics calls)
+    pub fn from_systemtime(t: SystemTime) -> Option<Self> {
+        // Enable chrono::Utc.timestamp_opt.
+        // This function converts a pair of seconds and nanoseconds from the
+        // SystemTime type to a DateTime type.
+        use chrono::TimeZone;
+
+        t.duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| {
+                chrono::Utc.timestamp_opt(d.as_secs() as i64, d.subsec_nanos())
+            })
+            .map(|t| t.single().unwrap())
+            .map(Self)
+    }
+}
 
 /// Anyhow error
 pub use anyhow;
 
 /// Tracing
 pub use tracing;
-
-/// Attempt to convert a [`SystemTime`] (returned on file statistics calls)
-/// to the DateTime type. How inconvenient is this?
-pub fn systime2datetime(t: SystemTime) -> Option<DateTime> {
-    // Enable chrono::Utc.timestamp_opt.
-    // This function converts a pair of seconds and nanoseconds from the
-    // SystemTime type to a DateTime type.
-    use chrono::TimeZone;
-
-    t.duration_since(std::time::UNIX_EPOCH)
-        .ok()
-        .map(|d| {
-            chrono::Utc.timestamp_opt(d.as_secs() as i64, d.subsec_nanos())
-        })
-        .map(|t| t.single().unwrap())
-}
 
 /// Unified error type.
 ///
