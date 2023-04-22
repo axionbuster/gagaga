@@ -246,8 +246,7 @@ fn map2<S: Stream<Item = Result<(String, std::fs::Metadata)>>>(
                 ).into());
                 continue;
             };
-            let lmo = md.modified().ok().map(DateTime::from
-            );
+            let lmo = md.modified().ok().map(DateTime::from);
 
             yield Ok(FileMetadata {
                 file_type: fty,
