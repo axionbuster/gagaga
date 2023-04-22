@@ -113,13 +113,16 @@ though whole path ({sp:?}) is UTF-8. \
             // Detect leading or trailing whitespace in component
             // If exists, log the bad character (`bad`) and reject
             let mut bad = '\0';
-            if component.starts_with(|c: char| {
+            let bad_start = component.starts_with(|c: char| {
                 bad = c;
                 c.is_whitespace()
-            }) || component.ends_with(|c: char| {
-                bad = c;
-                c.is_whitespace()
-            }) {
+            });
+            let has_bad = bad_start
+                || component.ends_with(|c: char| {
+                    bad = c;
+                    c.is_whitespace()
+                });
+            if has_bad {
                 tracing::trace!("Path component has leading or trailing whitespace ({bad:?}), reject. \
 Component: {component:?}");
                 return true;
@@ -271,10 +274,7 @@ fn map2<S: Stream<Item = Result<(String, std::fs::Metadata)>>>(
             } else if fty.is_symlink() {
                 FileType::Link
             } else {
-                tracing::warn!("Unknown file type");
-                yield Err(std::io::Error::from(
-                    std::io::ErrorKind::Other
-                ).into());
+                yield Err(Error::IO(anyhow::anyhow!("Unknown file type")));
                 continue;
             };
             let lmo = md.modified().ok().map(DateTime::from);
