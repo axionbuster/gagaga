@@ -2,9 +2,9 @@
 
 mod api;
 mod prim;
+mod thcache;
 mod thumb;
 mod vfs;
-mod thcache;
 
 #[tokio::main]
 async fn main() {

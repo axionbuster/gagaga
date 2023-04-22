@@ -305,7 +305,7 @@ impl ReadMetadata for TokioBacked {
             file_type: fty,
             file_name: fna.to_string(),
             size: md.len(),
-            last_modified: lmo
+            last_modified: lmo,
         })
     }
 }

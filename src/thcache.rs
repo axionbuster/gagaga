@@ -1,12 +1,12 @@
 //! Thumbnail caching
 
-use std::{collections::HashMap, pin::Pin, sync::Arc};
+use std::collections::HashMap;
 
 use tokio::sync::mpsc;
 
 use crate::{
     prim::*,
-    vfs::{ReadMetadata, TokioBacked, VirtualPathBuf},
+    vfs::{ReadMetadata, VirtualPathBuf},
 };
 
 /// Inspect the response from the cache process
@@ -59,8 +59,7 @@ impl CacheProcess {
                     Some(Msg::Get { srvpath, rpy }) => {
                         tracing::info!("Getting from cache");
                         let meta = vfs.read_metadata(&srvpath).await;
-                        let fslmo =
-                            meta.ok().map(|m| m.last_modified).flatten();
+                        let fslmo = meta.ok().and_then(|m| m.last_modified);
                         let ca = hmp.get(&srvpath);
                         let fresh = fslmo.is_some()
                             && ca.is_some()
@@ -85,9 +84,9 @@ impl CacheProcess {
     }
 
     /// Attempt to insert a thumbnail into the cache.
-    /// 
+    ///
     /// It may succeed or fail but it will not block.
-    /// 
+    ///
     /// NO GUARANTEES: The cache may be full or the cache process may
     /// have shut down. And, even when the cache is in good state,
     /// the sending may fail for other reasons.
@@ -98,10 +97,10 @@ impl CacheProcess {
     }
 
     /// Attempt to get a thumbnail from the cache.
-    /// 
+    ///
     /// It accesses the cache and the file system to determine whether
     /// the entry existed and whether it is fresh.
-    /// 
+    ///
     /// NO GUARANTEES: This is a best-effort operation.
     pub async fn get(&self, srvpath: VirtualPathBuf) -> Option<Vec<u8>> {
         tracing::info!("Getting from cache");
