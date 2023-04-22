@@ -50,14 +50,15 @@ impl CacheProcess {
             // Central data structure
             let mut hmp: HashMap<VirtualPathBuf, (DateTime, Vec<u8>)> =
                 HashMap::new();
+            tracing::info!("Cache process up");
             loop {
                 match rx.recv().await {
                     Some(Msg::Ins { srvpath, now, dat }) => {
-                        tracing::info!("Inserting into cache");
+                        tracing::trace!("Inserting into cache");
                         hmp.insert(srvpath, (now, dat));
                     }
                     Some(Msg::Get { srvpath, rpy }) => {
-                        tracing::info!("Getting from cache");
+                        tracing::trace!("Getting from cache");
                         let meta = vfs.read_metadata(&srvpath).await;
                         let fslmo = meta.ok().and_then(|m| m.last_modified);
                         let ca = hmp.get(&srvpath);
@@ -65,11 +66,11 @@ impl CacheProcess {
                             && ca.is_some()
                             && fslmo.unwrap() < ca.unwrap().0;
                         if fresh {
-                            tracing::info!("Cache hit");
+                            tracing::trace!("Cache hit");
                             let (lmo, dat) = ca.unwrap().clone();
                             let _ = rpy.send(Some(CacheResponse { dat, lmo }));
                         } else {
-                            tracing::info!("Cache miss");
+                            tracing::trace!("Cache miss");
                             let _ = rpy.send(None);
                         }
                     }
