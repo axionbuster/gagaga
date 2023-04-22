@@ -1,5 +1,9 @@
 //! File Lister --- list files in a directory (don't download)
 
+mod api;
+mod prim;
+mod vfs;
+
 #[tokio::main]
 async fn main() {
     // Init logging
