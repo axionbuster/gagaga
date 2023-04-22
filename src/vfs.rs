@@ -110,7 +110,20 @@ though whole path ({sp:?}) is UTF-8. \
                 component
             };
 
-            // Strip leading and trailing whitespace
+            // Detect leading or trailing whitespace in component
+            // If exists, log the bad character (`bad`) and reject
+            let mut bad = '\0';
+            if component.starts_with(|c: char| {
+                bad = c;
+                c.is_whitespace()
+            }) || component.ends_with(|c: char| {
+                bad = c;
+                c.is_whitespace()
+            }) {
+                tracing::trace!("Path component has leading or trailing whitespace ({bad:?}), reject. \
+Component: {component:?}");
+                return true;
+            }
             let component = component.trim();
 
             if matches!(component, "CON" | "PRN" | "AUX" | "NUL") {
@@ -132,6 +145,7 @@ though whole path ({sp:?}) is UTF-8. \
             }
         } else {
             // Not a normal component
+            tracing::trace!("Non-normal component in path, reject. Component: {component:?}");
             return true;
         }
     }
