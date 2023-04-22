@@ -34,7 +34,7 @@ use crate::prim::*;
 /// It's possible that the longest path on Windows that is
 /// admitted by this algorithm is significantly shorter than
 /// what is admitted under Unix-like platforms due to the encoding.
-#[instrument]
+#[instrument(skip(p), fields(osstrlen = p.as_ref().as_os_str().len()))]
 pub fn bad_path1(p: impl AsRef<Path> + Debug) -> bool {
     // Long
     // Note: .len() does NOT refer to the number of bytes in the
@@ -43,26 +43,37 @@ pub fn bad_path1(p: impl AsRef<Path> + Debug) -> bool {
     // (.as_bytes() being defined on Unix-like platforms only),
     // but that wouldn't work on Windows.
     if p.as_ref().as_os_str().len() > 2048 {
+        tracing::trace!("Path too long, reject");
         return true;
     }
 
     // Invalid UTF-8 check. Also get a UTF-8 representation.
     let sp = p.as_ref().to_str();
     if sp.is_none() {
+        tracing::trace!(
+            "Path not valid UTF-8, reject. \
+Best rendering (with escapes): {render:?}",
+            render = p.as_ref().to_string_lossy()
+        );
         return true;
     }
     let sp = sp.unwrap();
 
     // Control characters or Windows-specific bad characters, but
     // enforced for all platforms anyway
-    if sp.contains(|c: char| {
+    let mut ctrl = sp.matches(|c: char| {
         c.is_ascii_control()
             || matches!(c, '/' | '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*')
-    }) {
+    });
+    if let Some(c) = ctrl.next() {
+        tracing::trace!(
+            "Path contains a bad character ({c:?}), reject. Path: {sp:?}"
+        );
         return true;
     }
 
-    // Some prohibited (Windows) file names
+    // Some prohibited (Windows) file names.
+    // (Again, this is enforced for all platforms.)
     for component in p.as_ref().components() {
         if let Component::Normal(component) = component {
             let component2 = component.to_str();
@@ -84,8 +95,8 @@ pub fn bad_path1(p: impl AsRef<Path> + Debug) -> bool {
 
                 tracing::warn!(
                     "Path component ({component:?}) not UTF-8, \
-though whole path ({sp:?}) is UTF-8. Crafted path? \
-Breakdown: (len: {len} bytes) component = {breakdown:?}. Halt.",
+though whole path ({sp:?}) is UTF-8. \
+(utf8-len: {len} bytes). Reject.",
                     len = breakdown.len()
                 );
                 return true;
@@ -99,7 +110,11 @@ Breakdown: (len: {len} bytes) component = {breakdown:?}. Halt.",
                 component
             };
 
+            // Strip leading and trailing whitespace
+            let component = component.trim();
+
             if matches!(component, "CON" | "PRN" | "AUX" | "NUL") {
+                tracing::trace!("Path component is a reserved name, reject. Component: {component:?}");
                 return true;
             }
 
@@ -111,6 +126,7 @@ Breakdown: (len: {len} bytes) component = {breakdown:?}. Halt.",
                 }
                 let c = c.unwrap();
                 if c.is_ascii_digit() {
+                    tracing::trace!("Path component is a reserved name, reject. Component: {component:?}");
                     return true;
                 }
             }
@@ -186,6 +202,7 @@ pub struct TokioBacked {
 
 #[async_trait]
 impl ListDirectory for TokioBacked {
+    #[instrument]
     async fn list_directory(
         &self,
         virt_path: impl AsRef<Path> + Debug + Send + Sync,
@@ -201,6 +218,7 @@ impl ListDirectory for TokioBacked {
 }
 
 /// Convert a stream of [`DirEntry`]'s to ([`String`] \[filename\], [`std::fs::Metadata`])
+#[instrument(skip(stream))]
 fn map1<S: Stream<Item = std::io::Result<DirEntry>>>(
     stream: S,
 ) -> impl Stream<Item = Result<(String, std::fs::Metadata)>> {
@@ -208,18 +226,16 @@ fn map1<S: Stream<Item = std::io::Result<DirEntry>>>(
         for await de in stream {
             let de = de?;
             let md = de.metadata().await?;
-            let fna = de.file_name().to_str().ok_or_else(||
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "File name not UTF-8")
-                )?
-                .to_owned();
-            yield Ok((fna, md));
+            let fna = de.file_name();
+            let fna = fna.to_str().ok_or_else(|| anyhow::anyhow!("filename {fna:?} not valid Unicode"));
+            let yil = fna.map(|fna| (fna.to_string(), md)).map_err(Error::IO);
+            yield yil;
         }
     }
 }
 
 /// Convert a stream of ([`String`] \[filename\], [`std::fs::Metadata`]) to [`FileMetadata`]
+#[instrument(skip(stream))]
 fn map2<S: Stream<Item = Result<(String, std::fs::Metadata)>>>(
     stream: S,
 ) -> impl Stream<Item = Result<FileMetadata>> {
@@ -270,23 +286,21 @@ pub trait ReadMetadata: Send + Sync {
 
 #[async_trait]
 impl ReadMetadata for TokioBacked {
-    #[tracing::instrument(skip(self))]
+    #[instrument]
     async fn read_metadata(
         &self,
         virt_path: impl AsRef<Path> + Debug + Send + Sync + Clone,
     ) -> Result<FileMetadata> {
         let vpa = virt_path.clone();
-        let fna = vpa.as_ref().file_name().ok_or_else(|| {
-            tracing::warn!("No file name");
-            std::io::Error::from(std::io::ErrorKind::Other)
-        })?;
+        let fna = vpa
+            .as_ref()
+            .file_name()
+            .ok_or_else(|| Error::IO(anyhow::anyhow!("no file name")))?;
         let fna = fna.to_str().ok_or_else(|| {
-            tracing::warn!("File name not UTF-8");
-            std::io::Error::from(std::io::ErrorKind::Other)
+            Error::IO(anyhow::anyhow!("filename {fna:?} not valid Unicode"))
         })?;
         let md = tokio::fs::metadata(virt_path).await.map_err(|e| {
-            tracing::warn!("Failed to read metadata: {}", e);
-            Error::from(e)
+            Error::IO(anyhow::anyhow!("get metadata {fna:?}: {e}"))
         })?;
         let fty = md.file_type();
         let fty = if fty.is_file() {
@@ -296,8 +310,7 @@ impl ReadMetadata for TokioBacked {
         } else if fty.is_symlink() {
             FileType::Link
         } else {
-            tracing::warn!("Unknown file type");
-            return Err(std::io::Error::from(std::io::ErrorKind::Other).into());
+            return Err(Error::IO(anyhow::anyhow!("Unknown file type")));
         };
         let lmo = md.modified().ok().map(DateTime::from);
 

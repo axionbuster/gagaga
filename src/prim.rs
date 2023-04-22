@@ -24,15 +24,19 @@ pub enum Error {
 
     /// Any error caused by I/O
     #[error("I/O Error: {0}")]
-    IO(
-        #[source]
-        #[from]
-        std::io::Error,
-    ),
+    IO(#[source] anyhow::Error),
 
     /// Any error caused while parsing times and dates
     #[error("Time Error: {0}")]
     TimeError(#[source] anyhow::Error),
+}
+
+/// Allow smooth conversion from an [`std::io::Error`] to
+/// [`Error::IO`]
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Self::IO(e.into())
+    }
 }
 
 /// General result type
@@ -55,7 +59,7 @@ impl DateTime {
         self.0
             .format(&Rfc3339)
             .context("formatting date to RFC3339")
-            .map_err(Error::General)
+            .map_err(Error::TimeError)
             .unwrap()
     }
 
@@ -66,7 +70,7 @@ impl DateTime {
         self.0
             .format(&Rfc2822)
             .context("formatting date to RFC2822")
-            .map_err(Error::General)
+            .map_err(Error::TimeError)
             .unwrap()
     }
 
