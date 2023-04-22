@@ -61,11 +61,11 @@ Best rendering (with escapes): {render:?}",
 
     // Control characters or Windows-specific bad characters, but
     // enforced for all platforms anyway
-    let mut ctrl = sp.matches(|c: char| {
+    let ctrl = sp.matches(|c: char| {
         c.is_ascii_control()
             || matches!(c, '/' | '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*')
     });
-    if let Some(c) = ctrl.next() {
+    if let Some(c) = ctrl.into_iter().next() {
         tracing::trace!(
             "Path contains a bad character ({c:?}), reject. Path: {sp:?}"
         );
