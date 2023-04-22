@@ -120,7 +120,7 @@ Breakdown: (len: {len} bytes) component = {breakdown:?}. Halt.",
         }
     }
 
-    return false;
+    false
 }
 
 /// Define a file type
@@ -246,8 +246,7 @@ fn map2<S: Stream<Item = Result<(String, std::fs::Metadata)>>>(
                 ).into());
                 continue;
             };
-            let lmo = md.modified().ok().map(|systemtime|
-                DateTime::from(systemtime)
+            let lmo = md.modified().ok().map(DateTime::from
             );
 
             yield Ok(FileMetadata {
