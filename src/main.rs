@@ -2,6 +2,7 @@
 
 mod api;
 mod prim;
+mod thumb;
 mod vfs;
 
 #[tokio::main]
