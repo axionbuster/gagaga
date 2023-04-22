@@ -4,6 +4,7 @@ mod api;
 mod prim;
 mod thumb;
 mod vfs;
+mod thcache;
 
 #[tokio::main]
 async fn main() {

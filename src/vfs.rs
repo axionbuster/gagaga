@@ -136,7 +136,7 @@ pub enum FileType {
 ///
 /// Unless stated otherwise, it's not guaranteed that the path
 /// is absolute, relative, valid, normal, etc.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct VirtualPathBuf(pub PathBuf);
 
 impl AsRef<Path> for VirtualPathBuf {
@@ -179,13 +179,13 @@ pub trait ListDirectory: Send + Sync {
 
 /// A Tokio implementation
 #[derive(Debug)]
-pub struct TokioListDirectory {
+pub struct TokioBacked {
     /// Root of the filesystem in the real world, absolute path
     pub real_root: PathBuf,
 }
 
 #[async_trait]
-impl ListDirectory for TokioListDirectory {
+impl ListDirectory for TokioBacked {
     async fn list_directory(
         &self,
         virt_path: impl AsRef<Path> + Debug + Send + Sync,
@@ -255,5 +255,57 @@ fn map2<S: Stream<Item = Result<(String, std::fs::Metadata)>>>(
                 last_modified: lmo
             });
         }
+    }
+}
+
+/// VFS functionality that reads files' metadata
+#[async_trait]
+pub trait ReadMetadata: Send + Sync {
+    /// Read metadata for a file
+    async fn read_metadata(
+        &self,
+        virt_path: impl AsRef<Path> + Debug + Send + Sync + Clone,
+    ) -> Result<FileMetadata>;
+}
+
+#[async_trait]
+impl ReadMetadata for TokioBacked {
+    #[tracing::instrument(skip(self))]
+    async fn read_metadata(
+        &self,
+        virt_path: impl AsRef<Path> + Debug + Send + Sync + Clone,
+    ) -> Result<FileMetadata> {
+        let vpa = virt_path.clone();
+        let fna = vpa.as_ref().file_name().ok_or_else(|| {
+            tracing::warn!("No file name");
+            std::io::Error::from(std::io::ErrorKind::Other)
+        })?;
+        let fna = fna.to_str().ok_or_else(|| {
+            tracing::warn!("File name not UTF-8");
+            std::io::Error::from(std::io::ErrorKind::Other)
+        })?;
+        let md = tokio::fs::metadata(virt_path).await.map_err(|e| {
+            tracing::warn!("Failed to read metadata: {}", e);
+            Error::from(e)
+        })?;
+        let fty = md.file_type();
+        let fty = if fty.is_file() {
+            FileType::RegularFile
+        } else if fty.is_dir() {
+            FileType::Directory
+        } else if fty.is_symlink() {
+            FileType::Link
+        } else {
+            tracing::warn!("Unknown file type");
+            return Err(std::io::Error::from(std::io::ErrorKind::Other).into());
+        };
+        let lmo = md.modified().ok().map(DateTime::from);
+
+        Ok(FileMetadata {
+            file_type: fty,
+            file_name: fna.to_string(),
+            size: md.len(),
+            last_modified: lmo
+        })
     }
 }
