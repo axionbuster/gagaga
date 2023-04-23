@@ -246,19 +246,32 @@ async fn api_list(
     Chroot(chroot): Chroot,
     VPath(vpath): VPath,
 ) -> ApiResult<impl IntoResponse> {
-    /// Serialize a directory entry into a JSON object
+    /// Serialize a file's metadata into a JSON object
     fn serfmta(md: &FileMetadata) -> Value {
         let mut value = json!({
             "name": md.file_name,
-            "type": md.file_type,
         });
-        if let Some(size) = md.size {
-            value["size"] = json!(size);
-        }
-        if let Some(mtime) = md.last_modified {
-            let mtime = mtime.rfc2822();
-            value["mtime"] = json!(mtime);
-        }
+        let null = json!(null);
+        value["type"] = match md.file_type {
+            FileType::Directory => json!("dir"),
+            FileType::RegularFile => json!("file"),
+            FileType::Link => json!("symlink"),
+            #[allow(unreachable_patterns)]
+            _ => {
+                // Want to guard against new variants being added,
+                // so log a warning.
+                tracing::warn!(
+                    "in serfmta, unhandled variant: {ft:?}",
+                    ft = md.file_type
+                );
+                null.clone()
+            }
+        };
+        value["size"] =
+            md.size.map_or_else(|| null.clone(), |size| json!(size));
+        value["mtime"] = md
+            .last_modified
+            .map_or_else(|| null.clone(), |t| json!(t.rfc2822()));
         value
     }
 

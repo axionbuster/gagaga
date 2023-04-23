@@ -164,15 +164,13 @@ Component: {component:?}");
 
 /// Define a file type
 #[non_exhaustive]
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum FileType {
-    #[serde(rename = "file")]
+    /// A regular file
     RegularFile,
-    #[serde(rename = "dir")]
+    /// A directory
     Directory,
-    #[serde(rename = "symlink")]
+    /// A symbolic link
     Link,
 }
 
