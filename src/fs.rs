@@ -237,42 +237,35 @@ where
     }
 }
 
-/// A stream of FileMetadata's
-pub type FileMetadataStream = Pin<Box<dyn Stream<Item = Result<FileMetadata>>>>;
-
-/// Asynchronously list a directory
+/// Asynchronously list a directory, returning a stream of
+/// [`FileMetadata`]s (though with the possibility of errors).
 #[instrument]
 pub async fn list_directory(
     chroot: impl AsRef<RealPath> + Debug + Send + Sync,
     virt_path: impl AsRef<VirtualPath> + Debug + Send + Sync,
-) -> Result<FileMetadataStream> {
+) -> Result<Pin<Box<dyn Stream<Item = Result<FileMetadata>>>>> {
     let read_dir =
         tokio::fs::read_dir(chroot.as_ref().join(virt_path.as_ref()))
             .await
             .context("open read_dir")?;
     let read_dir = tokio_stream::wrappers::ReadDirStream::new(read_dir);
-    fn make_stream(
-        read_dir: tokio_stream::wrappers::ReadDirStream,
-    ) -> impl Stream<Item = Result<FileMetadata>> {
-        try_stream! {
-            for await de in read_dir {
-                // Find the file name
-                let de = de
-                    .context("get directory entry")?;
-                let fna = de
-                    .file_name()
-                    .to_str()
-                    .ok_or_else(|| anyhow!("file name bad utf-8"))?
-                    .to_string();
-                // Find the metadata
-                let md = de.metadata().await.context("get metadata")?;
-                // Go
-                let md: FileMetadata = (fna, md).try_into()?;
-                yield md;
-            }
+    let read_dir = try_stream! {
+        for await de in read_dir {
+            // Find the file name
+            let de = de
+                .context("get directory entry")?;
+            let fna = de
+                .file_name()
+                .to_str()
+                .ok_or_else(|| anyhow!("file name bad utf-8"))?
+                .to_string();
+            // Find the metadata
+            let md = de.metadata().await.context("get metadata")?;
+            // Go
+            let md: FileMetadata = (fna, md).try_into()?;
+            yield md;
         }
-    }
-    let read_dir = make_stream(read_dir);
+    };
     Ok(Box::pin(read_dir))
 }
 
