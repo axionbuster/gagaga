@@ -12,7 +12,7 @@ use axum::{
     response::IntoResponse,
 };
 use bytes::BytesMut;
-use serde_json::json;
+use serde_json::{json, Value};
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio_stream::StreamExt;
@@ -140,9 +140,7 @@ impl axum::extract::FromRequestParts<()> for VPath {
         let vpath = parts
             .extensions
             .get::<VPath>()
-            .ok_or_else(|| {
-                ApiError::with_status(500)(anyhow!("vpath not set"))
-            })
+            .ok_or_else(|| ApiError::with_status(500)(anyhow!("vpath not set")))
             .map(|vpath| vpath.clone())?;
         Ok(vpath)
     }
@@ -153,7 +151,7 @@ impl axum::extract::FromRequestParts<()> for VPath {
 struct VPath(pub PathBuf);
 
 /// Only continue if the path is valid.
-/// 
+///
 /// Set VPath in the request extensions.
 #[instrument(skip(req, next), err)]
 async fn mw_guard_virt_path(
@@ -248,6 +246,22 @@ async fn api_list(
     Chroot(chroot): Chroot,
     VPath(vpath): VPath,
 ) -> ApiResult<impl IntoResponse> {
+    /// Serialize a directory entry into a JSON object
+    fn serfmta(md: &FileMetadata) -> Value {
+        let mut value = json!({
+            "name": md.file_name,
+            "type": md.file_type,
+        });
+        if let Some(size) = md.size {
+            value["size"] = json!(size);
+        }
+        if let Some(mtime) = md.last_modified {
+            let mtime = mtime.rfc2822();
+            value["mtime"] = json!(mtime);
+        }
+        value
+    }
+
     let mut dirs = vec![];
     let mut files = vec![];
 
@@ -264,25 +278,25 @@ async fn api_list(
 
         // Categorize
         if md.file_type == FileType::RegularFile {
-            files.push(md);
+            files.push(serfmta(&md));
             continue;
         } else if md.file_type == FileType::Directory {
-            dirs.push(md);
+            dirs.push(serfmta(&md));
             continue;
         }
 
         // Follow and then categorize. But, use the ORIGINAL metadata.
         let vpathf = vpath.join(&md.file_name);
-        let md2 = follow_get_md(&chroot, &vpathf).await;
-        if md2.is_err() {
+        let md = follow_get_md(&chroot, &vpathf).await;
+        if md.is_err() {
             continue;
         }
-        let md2 = md2.unwrap();
-        if md2.file_type == FileType::RegularFile {
-            files.push(md2);
+        let md = md.unwrap();
+        if md.file_type == FileType::RegularFile {
+            files.push(serfmta(&md));
             continue;
-        } else if md2.file_type == FileType::Directory {
-            dirs.push(md2);
+        } else if md.file_type == FileType::Directory {
+            dirs.push(serfmta(&md));
             continue;
         }
         // If neither type even after following, ignore.

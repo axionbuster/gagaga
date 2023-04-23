@@ -168,8 +168,11 @@ Component: {component:?}");
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize,
 )]
 pub enum FileType {
+    #[serde(rename = "file")]
     RegularFile,
+    #[serde(rename = "dir")]
     Directory,
+    #[serde(rename = "symlink")]
     Link,
 }
 
@@ -183,14 +186,14 @@ pub type RealPath = Path;
 
 /// Metadata for a file object
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FileMetadata {
     /// Type of file
     pub file_type: FileType,
     /// File name (not path)
     pub file_name: String,
-    /// File size, bytes
-    pub size: u64,
+    /// File size, bytes, where applicable
+    pub size: Option<u64>,
     /// Last modified
     pub last_modified: Option<DateTime>,
 }
@@ -208,11 +211,15 @@ where
     ) -> std::result::Result<Self, Self::Error> {
         let (fna, fme) = value;
         let fna = fna.try_into().map_err(|_| anyhow!("bad utf-8"))?;
+        let fsi;
         let fty = if fme.is_file() {
+            fsi = Some(fme.len());
             FileType::RegularFile
         } else if fme.is_dir() {
+            fsi = None;
             FileType::Directory
         } else if fme.file_type().is_symlink() {
+            fsi = None;
             FileType::Link
         } else {
             bail!("unknown file type");
@@ -221,7 +228,7 @@ where
         Ok(Self {
             file_type: fty,
             file_name: fna,
-            size: fme.len(),
+            size: fsi,
             last_modified: lmo,
         })
     }
