@@ -356,15 +356,13 @@ async fn api_list(
 
 /// Build a complete router for the list API
 #[instrument]
-pub fn build_list_api() -> axum::Router<(), axum::body::Body> {
+pub fn build_list_api(chroot: PathBuf) -> axum::Router<(), axum::body::Body> {
     use axum::routing::get;
-
-    let root = PathBuf::from("/tmp");
 
     axum::Router::new()
         .route("/*vpath", get(api_list))
         .route("/", get(api_list))
         .layer(from_fn(mw_guard_virt_path))
         .layer(from_fn(mw_nosniff))
-        .layer(from_fn_with_state(root, mw_set_chroot))
+        .layer(from_fn_with_state(chroot, mw_set_chroot))
 }
