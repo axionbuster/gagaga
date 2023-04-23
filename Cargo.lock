@@ -245,6 +245,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-stream",
+ "async-trait",
  "axum",
  "bytes",
  "image",

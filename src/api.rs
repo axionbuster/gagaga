@@ -2,10 +2,13 @@
 
 use std::{fmt::Debug, path::PathBuf};
 
+use async_trait::async_trait;
 use axum::{
+    body::Body,
+    debug_handler,
     extract::State,
     http::{self, header, StatusCode},
-    middleware::Next,
+    middleware::{from_fn, from_fn_with_state, Next},
     response::IntoResponse,
 };
 use bytes::BytesMut;
@@ -51,15 +54,15 @@ impl From<(StatusCode, Error)> for ApiError {
     }
 }
 
+impl IntoResponse for ApiError {
+    fn into_response(self) -> axum::response::Response {
+        let status = self.0;
+        (status, status.canonical_reason().unwrap_or_default()).into_response()
+    }
+}
+
 /// API Result
 type ApiResult<T> = std::result::Result<T, ApiError>;
-
-/// Application State
-#[derive(Debug, Clone)]
-struct AppState {
-    /// The root of the virtual filesystem in terms of an actual path
-    chroot: PathBuf,
-}
 
 /// Canonicalize a path and check if it's in the chroot.
 ///
@@ -88,14 +91,55 @@ async fn follow_get_md(
     Ok(meta)
 }
 
-/// Only continue if the path is valid
-#[instrument]
-async fn mw_guard_virt_path<B: Debug>(
-    state: State<AppState>,
-    axum::extract::Path(vpath): axum::extract::Path<std::path::PathBuf>,
+/// The Chroot type
+#[derive(Debug, Clone)]
+struct Chroot(pub PathBuf);
+
+/// Allow Chroot to be extracted from the request
+#[async_trait]
+impl axum::extract::FromRequestParts<()> for Chroot {
+    type Rejection = ApiError;
+
+    #[instrument]
+    async fn from_request_parts(
+        parts: &mut http::request::Parts,
+        state: &(),
+    ) -> ApiResult<Self> {
+        let chroot = parts
+            .extensions
+            .get::<Chroot>()
+            .ok_or_else(|| {
+                ApiError::with_status(500)(anyhow!("chroot not set"))
+            })
+            .map(|chroot| chroot.clone())?;
+        Ok(chroot)
+    }
+}
+
+/// Set the Chroot from the global state, or return 500.
+#[instrument(skip(req, next))]
+async fn mw_set_chroot<B>(
+    State(chroot): State<PathBuf>,
     mut req: http::Request<B>,
     next: Next<B>,
+) -> impl IntoResponse {
+    req.extensions_mut().insert(Chroot(chroot));
+    next.run(req).await
+}
+
+/// Only continue if the path is valid
+#[instrument(skip(req, next), err)]
+async fn mw_guard_virt_path(
+    Chroot(chroot): Chroot,
+    vpath: Option<axum::extract::Path<std::path::PathBuf>>,
+    req: http::Request<Body>,
+    next: Next<Body>,
 ) -> ApiResult<impl IntoResponse> {
+    let vpath = match vpath {
+        Some(vpath) => vpath.0,
+        None => "/".into(),
+    };
+
     // Quick check
     if bad_path1(&vpath) {
         return Err((
@@ -105,21 +149,13 @@ async fn mw_guard_virt_path<B: Debug>(
             .into());
     }
 
-    // Follow (canonicalize and get the metadata thereof) the link
-    // if it's a link; otherwise, just get the metadata.
-    let meta = follow_get_md(&state.chroot, &vpath).await?;
-
-    // In the end, the original virtual path gets admitted.
-    // But, we also push the metadata down there.
-    req.extensions_mut().insert(meta);
-
     Ok(next.run(req).await)
 }
 
 /// No sniff
 ///
 /// Set the `X-Content-Type-Options` header to `nosniff`.
-#[instrument]
+#[instrument(skip(req, next))]
 async fn mw_nosniff<B: Debug>(
     req: http::Request<B>,
     next: Next<B>,
@@ -135,13 +171,13 @@ async fn mw_nosniff<B: Debug>(
 /// Thumbnail API
 ///
 /// Thumbnail a file with a maximum tolerance of reading (N) MB.
-#[instrument]
+#[instrument(err)]
 async fn api_thumbnail<const N: usize>(
-    state: State<AppState>,
+    Chroot(chroot): Chroot,
     axum::extract::Path(vpath): axum::extract::Path<String>,
 ) -> ApiResult<impl IntoResponse> {
     // Open file, read file, check length
-    let real_path = state.chroot.join(&vpath);
+    let real_path = chroot.join(&vpath);
     let mut file = tokio::fs::File::open(&real_path)
         .await
         .context("open file")
@@ -174,16 +210,17 @@ async fn api_thumbnail<const N: usize>(
 }
 
 /// Handle listing the directory into a JSON response
-#[instrument]
+#[debug_handler]
+#[instrument(err)]
 async fn api_list(
-    State(state): State<AppState>,
+    Chroot(chroot): Chroot,
     axum::extract::Path(vpath): axum::extract::Path<std::path::PathBuf>,
 ) -> ApiResult<impl IntoResponse> {
     let mut dirs = vec![];
     let mut files = vec![];
 
     // Read the directory
-    let mut stream = list_directory(&state.chroot, &vpath)
+    let mut stream = list_directory(&chroot, &vpath)
         .await
         .context("list directory")
         .map_err(ApiError::with_status(404))?;
@@ -204,7 +241,7 @@ async fn api_list(
 
         // Follow and then categorize. But, use the ORIGINAL metadata.
         let vpathf = vpath.join(&md.file_name);
-        let md2 = follow_get_md(&state.chroot, &vpathf).await;
+        let md2 = follow_get_md(&chroot, &vpathf).await;
         if md2.is_err() {
             continue;
         }
@@ -231,4 +268,19 @@ async fn api_list(
         [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
         value,
     ))
+}
+
+/// Build a complete router for the list API
+#[instrument]
+pub fn build_list_api() -> axum::Router<(), axum::body::Body> {
+    use axum::routing::get;
+
+    let root = PathBuf::from("/");
+
+    axum::Router::new()
+        .route("/*vpath", get(api_list))
+        .route("/", get(api_list))
+        .layer(from_fn(mw_guard_virt_path))
+        .layer(from_fn(mw_nosniff))
+        .layer(from_fn_with_state(root, mw_set_chroot))
 }

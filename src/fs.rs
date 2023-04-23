@@ -227,7 +227,7 @@ where
 pub async fn list_directory(
     chroot: impl AsRef<RealPath> + Debug + Send + Sync,
     virt_path: impl AsRef<VirtualPath> + Debug + Send + Sync,
-) -> Result<Pin<Box<dyn Stream<Item = Result<FileMetadata>>>>> {
+) -> Result<Pin<Box<dyn Stream<Item = Result<FileMetadata>> + Send>>> {
     let read_dir =
         tokio::fs::read_dir(chroot.as_ref().join(virt_path.as_ref()))
             .await
