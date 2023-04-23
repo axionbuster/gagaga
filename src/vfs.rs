@@ -337,3 +337,26 @@ impl ReadMetadata for TokioBacked {
         })
     }
 }
+
+/// VFS functionality that canonicalizes a path by accessing it in
+/// the real filesystem
+#[async_trait]
+pub trait Canonicalize {
+    /// Canonicalize a path stated relative to the VFS root
+    async fn canonicalize(
+        &self,
+        virt_path: impl AsRef<Path> + Debug + Send + Sync,
+    ) -> Result<PathBuf>;
+}
+
+#[async_trait]
+impl Canonicalize for TokioBacked {
+    async fn canonicalize(
+        &self,
+        virt_path: impl AsRef<Path> + Debug + Send + Sync,
+    ) -> Result<PathBuf> {
+        let real_path = self.real_root.join(virt_path.as_ref());
+        let real_path = tokio::fs::canonicalize(real_path).await?;
+        Ok(real_path)
+    }
+}
