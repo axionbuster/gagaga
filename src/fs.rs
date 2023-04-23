@@ -173,25 +173,6 @@ pub type VirtualPath = Path;
 /// computer (real root)
 pub type RealPath = Path;
 
-/// A path relative to the VFS root.
-///
-/// Unless stated otherwise, it's not guaranteed that the path
-/// is absolute, relative, valid, normal, etc.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct VirtualPathBuf(pub PathBuf);
-
-impl AsRef<Path> for VirtualPathBuf {
-    fn as_ref(&self) -> &Path {
-        self.0.as_ref()
-    }
-}
-
-impl From<PathBuf> for VirtualPathBuf {
-    fn from(p: PathBuf) -> Self {
-        Self(p)
-    }
-}
-
 /// Metadata for a file object
 #[non_exhaustive]
 pub struct FileMetadata {

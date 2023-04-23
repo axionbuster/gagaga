@@ -1,11 +1,11 @@
 //! Thumbnail caching
 
-use std::{collections::HashMap, fmt::Debug};
+use std::{collections::HashMap, fmt::Debug, path::PathBuf};
 
 use tokio::sync::mpsc;
 
 use crate::{
-    fs::{read_metadata, RealPath, VirtualPathBuf},
+    fs::{read_metadata, RealPath},
     prim::*,
 };
 
@@ -23,13 +23,13 @@ pub struct CacheResponse {
 enum Msg {
     /// Insert Now
     Ins {
-        srvpath: VirtualPathBuf,
+        virt_path: PathBuf,
         now: DateTime,
         dat: Vec<u8>,
     },
     /// Get only if fresh
     Get {
-        srvpath: VirtualPathBuf,
+        virt_path: PathBuf,
         rpy: tokio::sync::oneshot::Sender<Option<CacheResponse>>,
     },
 }
@@ -47,20 +47,23 @@ impl CacheProcess {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         tokio::spawn(async move {
             // Central data structure
-            let mut hmp: HashMap<VirtualPathBuf, (DateTime, Vec<u8>)> =
-                HashMap::new();
+            let mut hmp: HashMap<PathBuf, (DateTime, Vec<u8>)> = HashMap::new();
             tracing::info!("Cache process up");
             loop {
                 match rx.recv().await {
-                    Some(Msg::Ins { srvpath, now, dat }) => {
+                    Some(Msg::Ins {
+                        virt_path,
+                        now,
+                        dat,
+                    }) => {
                         tracing::trace!("Inserting into cache");
-                        hmp.insert(srvpath, (now, dat));
+                        hmp.insert(virt_path, (now, dat));
                     }
-                    Some(Msg::Get { srvpath, rpy }) => {
+                    Some(Msg::Get { virt_path, rpy }) => {
                         tracing::trace!("Getting from cache");
-                        let meta = read_metadata(&chroot, &srvpath).await;
+                        let meta = read_metadata(&chroot, &virt_path).await;
                         let fslmo = meta.ok().and_then(|m| m.last_modified);
-                        let ca = hmp.get(&srvpath);
+                        let ca = hmp.get(&virt_path);
                         let fresh = fslmo.is_some()
                             && ca.is_some()
                             && fslmo.unwrap() < ca.unwrap().0;
@@ -90,10 +93,14 @@ impl CacheProcess {
     /// NO GUARANTEES: The cache may be full or the cache process may
     /// have shut down. And, even when the cache is in good state,
     /// the sending may fail for other reasons.
-    pub fn ins(&self, srvpath: VirtualPathBuf, dat: Vec<u8>) {
+    pub fn ins(&self, virt_path: PathBuf, dat: Vec<u8>) {
         tracing::info!("Inserting into cache");
         let now = DateTime::now();
-        let _ = self.0.send(Msg::Ins { srvpath, now, dat });
+        let _ = self.0.send(Msg::Ins {
+            virt_path,
+            now,
+            dat,
+        });
     }
 
     /// Attempt to get a thumbnail from the cache.
@@ -102,10 +109,10 @@ impl CacheProcess {
     /// the entry existed and whether it is fresh.
     ///
     /// NO GUARANTEES: This is a best-effort operation.
-    pub async fn get(&self, srvpath: VirtualPathBuf) -> Option<Vec<u8>> {
+    pub async fn get(&self, virt_path: PathBuf) -> Option<Vec<u8>> {
         tracing::info!("Getting from cache");
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let _ = self.0.send(Msg::Get { srvpath, rpy: tx });
+        let _ = self.0.send(Msg::Get { virt_path, rpy: tx });
         rx.await.ok().flatten().map(|cr| cr.dat)
     }
 }
