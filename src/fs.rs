@@ -33,34 +33,50 @@ use crate::prim::*;
 /// It's possible that the longest path on Windows that is
 /// admitted by this algorithm is significantly shorter than
 /// what is admitted under Unix-like platforms due to the encoding.
+///
+/// On empty paths (""): returns `false`, which means that it is valid.
 #[instrument(skip(p), fields(osstrlen = p.as_ref().as_os_str().len()))]
 pub fn bad_path1(p: impl AsRef<Path> + Debug) -> bool {
+    let p: &Path = p.as_ref();
+
+    // Early pass for empty paths
+    if p.as_os_str().is_empty() {
+        tracing::trace!("Empty path, accept");
+        return false;
+    }
+
     // Long
     // Note: .len() does NOT refer to the number of bytes in the
     // path, but how many were in memory. If you only compile for
     // Unix-like platforms, you could use .as_bytes().len() instead,
     // (.as_bytes() being defined on Unix-like platforms only),
     // but that wouldn't work on Windows.
-    if p.as_ref().as_os_str().len() > 2048 {
+    if p.as_os_str().len() > 2048 {
         tracing::trace!("Path too long, reject");
         return true;
     }
 
+    // Set up logging the path once this function exits.
+    #[allow(unused)]
+    struct _PrintPathOnDrop<'a>(&'a Path);
+    impl Drop for _PrintPathOnDrop<'_> {
+        fn drop(&mut self) {
+            tracing::trace!("Path examined: {:?}", self.0);
+        }
+    }
+    #[cfg(debug_assertions)]
+    let _ = _PrintPathOnDrop(p);
+
     // Invalid UTF-8 check. Also get a UTF-8 representation.
-    let sp = p.as_ref().to_str();
+    let sp = p.to_str();
     if sp.is_none() {
-        tracing::trace!(
-            "Path not valid UTF-8, reject. \
-Best rendering (with escapes): {render:?}",
-            render = p.as_ref().to_string_lossy()
-        );
+        tracing::trace!("Path not valid UTF-8, reject.");
         return true;
     }
-    let sp = sp.unwrap();
 
     // Some prohibited (Windows) file names.
     // (Again, this is enforced for all platforms.)
-    for component in p.as_ref().components() {
+    for component in p.components() {
         if let Component::Normal(component) = component {
             let component2 = component.to_str();
             if component2.is_none() {
@@ -81,8 +97,7 @@ Best rendering (with escapes): {render:?}",
 
                 tracing::warn!(
                     "Path component ({component:?}) not UTF-8, \
-though whole path ({sp:?}) is UTF-8. \
-(utf8-len: {len} bytes). Reject.",
+though whole path is UTF-8. (utf8-len: {len} bytes). Reject.",
                     len = breakdown.len()
                 );
                 return true;
@@ -91,16 +106,16 @@ though whole path ({sp:?}) is UTF-8. \
 
             // Control characters or Windows-specific bad characters, but
             // enforced for all platforms anyway
-            let ctrl = sp.matches(|c: char| {
+            let filter = component.chars().filter(|c| {
                 c.is_ascii_control()
                     || matches!(
                         c,
                         '/' | '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*'
                     )
             });
-            if let Some(c) = ctrl.into_iter().next() {
+            if let Some(c) = filter.into_iter().next() {
                 tracing::trace!(
-                    "Path contains a bad character ({c:?}), reject. Path: {sp:?}"
+                    "Component contains a bad character ({c:?}), reject. Component: {component:?}"
                 );
                 return true;
             }
@@ -125,21 +140,27 @@ though whole path ({sp:?}) is UTF-8. \
                     c.is_whitespace()
                 });
             if has_bad {
-                tracing::trace!("Path component has leading or trailing whitespace ({bad:?}), reject. \
-Component: {component:?}");
+                tracing::trace!("Path component has leading or trailing whitespace ({bad:?}, value {val}), reject. \
+Component: {component:?}", val = bad as u32);
                 return true;
             }
-            let component = component.trim();
 
+            // Trim and then uppercase before checking against reserved names
+            let component = component.trim().to_ascii_uppercase();
+            let component = component.as_str();
+
+            // Check against reserved names
             if matches!(component, "CON" | "PRN" | "AUX" | "NUL") {
                 tracing::trace!("Path component is a reserved name, reject. Component: {component:?}");
                 return true;
             }
 
+            // Check against reserved names with numbers
             if matches!(&component.get(..=3), Some("COM" | "LPT")) {
                 // A single digit
                 let c = component.get(4..).and_then(|s| s.chars().next());
                 if c.is_none() {
+                    tracing::trace!("A component of COM or LPT by itself is fine, accept. Component: {component:?}");
                     continue;
                 }
                 let c = c.unwrap();
@@ -147,6 +168,7 @@ Component: {component:?}");
                     tracing::trace!("Path component is a reserved name, reject. Component: {component:?}");
                     return true;
                 }
+                // It will reject things like "COM1", "COM123", "COM2.ppt", etc.
             }
         } else if component == Component::RootDir {
             // Root directory is fine

@@ -123,6 +123,7 @@ async fn mw_set_chroot<B>(
     mut req: http::Request<B>,
     next: Next<B>,
 ) -> impl IntoResponse {
+    tracing::trace!("mw_set_chroot: {:?}", chroot);
     req.extensions_mut().insert(Chroot(chroot));
     next.run(req).await
 }
@@ -160,24 +161,48 @@ async fn mw_guard_virt_path(
     mut req: http::Request<Body>,
     next: Next<Body>,
 ) -> ApiResult<impl IntoResponse> {
-    let vpath = match vpath {
-        Some(vpath) => vpath.0,
-        None => "/".into(),
-    };
-
-    let real_path = chroot.join(vpath.clone());
+    // Extract PathBuf
+    let vpath = vpath.map(|vpath| vpath.0).unwrap_or_default();
 
     // Quick check
+    if bad_path1(&vpath) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            anyhow!("chk 1/3 bad vpath (quick): {vpath:?}"),
+        )
+            .into());
+    }
+
+    // Strip leading '/', which causes the `join` to silently fail.
+    let vpath = vpath.strip_prefix("/").unwrap_or(&vpath);
+
+    // Construct the real path
+    let real_path = chroot.join(vpath);
+    tracing::trace!("real_path: {real_path:?}");
+
+    // Inclusivity check (follow symlinks)
+    let real_path = canonicalize(&chroot, &vpath)
+        .await
+        .map_err(ApiError::with_status(404))?;
+    if !real_path.starts_with(chroot) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            anyhow!("chk 2/3 bad real path (incl): {real_path:?}"),
+        )
+            .into());
+    }
+
+    // Do another check
     if bad_path1(&real_path) {
         return Err((
             StatusCode::BAD_REQUEST,
-            anyhow!("bad real path: {:?}", real_path),
+            anyhow!("chk 3/3 bad real path (quick 2): {real_path:?}"),
         )
             .into());
     }
 
     // Set
-    req.extensions_mut().insert(VPath(vpath));
+    req.extensions_mut().insert(VPath(vpath.into()));
 
     Ok(next.run(req).await)
 }
@@ -334,7 +359,7 @@ async fn api_list(
 pub fn build_list_api() -> axum::Router<(), axum::body::Body> {
     use axum::routing::get;
 
-    let root = PathBuf::from("/");
+    let root = PathBuf::from("/tmp");
 
     axum::Router::new()
         .route("/*vpath", get(api_list))
