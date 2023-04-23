@@ -158,7 +158,9 @@ Component: {component:?}");
 
 /// Define a file type
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize,
+)]
 pub enum FileType {
     RegularFile,
     Directory,
@@ -175,6 +177,7 @@ pub type RealPath = Path;
 
 /// Metadata for a file object
 #[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct FileMetadata {
     /// Type of file
     pub file_type: FileType,

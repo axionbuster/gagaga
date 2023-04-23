@@ -2,10 +2,12 @@
 //!
 //! - Error and Result
 //! - Time handling
-use std::time::SystemTime;
 
 pub use anyhow::{anyhow, Context};
+pub use serde::Serialize;
 pub use tracing::instrument;
+
+use std::time::SystemTime;
 
 use time::OffsetDateTime;
 
@@ -16,7 +18,9 @@ pub type Error = anyhow::Error;
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// UTC Time and Date
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Hash,
+)]
 pub struct DateTime(OffsetDateTime);
 
 impl DateTime {
