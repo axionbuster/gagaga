@@ -116,6 +116,22 @@ async fn mw_guard_virt_path<B: Debug>(
     Ok(next.run(req).await)
 }
 
+/// No sniff
+///
+/// Set the `X-Content-Type-Options` header to `nosniff`.
+#[instrument]
+async fn mw_nosniff<B: Debug>(
+    req: http::Request<B>,
+    next: Next<B>,
+) -> impl IntoResponse {
+    let mut res = next.run(req).await;
+    res.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        header::HeaderValue::from_static("nosniff"),
+    );
+    res
+}
+
 /// Thumbnail API
 ///
 /// Thumbnail a file with a maximum tolerance of reading (N) MB.
