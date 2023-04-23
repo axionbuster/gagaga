@@ -297,7 +297,7 @@ pub async fn read_metadata(
         .context("get metadata")?;
 
     // Convert the metadata to a FileMetadata
-    Ok((fna, md).try_into()?)
+    (fna, md).try_into()
 }
 
 /// Canonicalize a path by accessing the file system
