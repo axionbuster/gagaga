@@ -247,6 +247,7 @@ dependencies = [
  "async-stream",
  "async-trait",
  "axum",
+ "bytes",
  "image",
  "mime_guess",
  "rand",

@@ -3,13 +3,19 @@
 use std::{fmt::Debug, path::PathBuf};
 
 use axum::{
-    extract::State, http::StatusCode, middleware::Next, response::IntoResponse,
+    extract::State,
+    http::{self, header, StatusCode},
+    middleware::Next,
+    response::IntoResponse,
 };
+use bytes::BytesMut;
 use thiserror::Error;
+use tokio::io::AsyncReadExt;
 
 use crate::{
     fs::{bad_path1, canonicalize, read_metadata, FileType},
     prim::*,
+    thumb::ithumbjpg,
 };
 
 /// API Error. This gets converted into Axum error responses
@@ -57,7 +63,7 @@ struct AppState {
 async fn mw_guard_virt_path<B: Debug>(
     state: State<AppState>,
     axum::extract::Path(vpath): axum::extract::Path<String>,
-    req: axum::http::Request<B>,
+    mut req: http::Request<B>,
     next: Next<B>,
 ) -> ApiResult<impl IntoResponse> {
     // Quick check
@@ -89,5 +95,47 @@ async fn mw_guard_virt_path<B: Debug>(
     }
 
     // In the end, the original virtual path gets admitted.
+    // But, we also push the metadata down there.
+    req.extensions_mut().insert(meta);
+
     Ok(next.run(req).await)
+}
+
+/// Thumbnail API
+///
+/// Thumbnail a file with a maximum tolerance of reading (N) MB.
+#[instrument]
+async fn api_thumbnail<const N: usize>(
+    state: State<AppState>,
+    axum::extract::Path(vpath): axum::extract::Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    // Open file, read file, check length
+    let real_path = state.chroot.join(&vpath);
+    let mut file = tokio::fs::File::open(&real_path)
+        .await
+        .context("open file")
+        .map_err(ApiError::NotFound)?;
+    let mut buf = BytesMut::with_capacity(N + 1);
+    let n = file
+        .read_buf(&mut buf)
+        .await
+        .context("read file")
+        .map_err(ApiError::NotFound)?;
+    if n > N {
+        return Err(ApiError::BadRequest(anyhow!(
+            "file too large ({n} > {N})"
+        )));
+    }
+
+    // Thumbnail, width 16, height 16, quality 30
+    let buf = buf.to_vec();
+    let jpg = tokio::spawn(async move { ithumbjpg::<16, 16, 30>(&buf) })
+        .await
+        .context("spawn thumbnailing task")
+        .map_err(ApiError::Ise)?
+        .context("thumbnailing")
+        .map_err(ApiError::NotFound)?;
+
+    // Response
+    Ok(([(header::CONTENT_TYPE, "image/jpeg")], jpg))
 }
