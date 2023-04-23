@@ -58,19 +58,6 @@ Best rendering (with escapes): {render:?}",
     }
     let sp = sp.unwrap();
 
-    // Control characters or Windows-specific bad characters, but
-    // enforced for all platforms anyway
-    let ctrl = sp.matches(|c: char| {
-        c.is_ascii_control()
-            || matches!(c, '/' | '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*')
-    });
-    if let Some(c) = ctrl.into_iter().next() {
-        tracing::trace!(
-            "Path contains a bad character ({c:?}), reject. Path: {sp:?}"
-        );
-        return true;
-    }
-
     // Some prohibited (Windows) file names.
     // (Again, this is enforced for all platforms.)
     for component in p.as_ref().components() {
@@ -101,6 +88,22 @@ though whole path ({sp:?}) is UTF-8. \
                 return true;
             }
             let component = component2.unwrap();
+
+            // Control characters or Windows-specific bad characters, but
+            // enforced for all platforms anyway
+            let ctrl = sp.matches(|c: char| {
+                c.is_ascii_control()
+                    || matches!(
+                        c,
+                        '/' | '<' | '>' | ':' | '"' | '\\' | '|' | '?' | '*'
+                    )
+            });
+            if let Some(c) = ctrl.into_iter().next() {
+                tracing::trace!(
+                    "Path contains a bad character ({c:?}), reject. Path: {sp:?}"
+                );
+                return true;
+            }
 
             // Strip anything after the first period (.)
             let component = if let Some((x, _)) = component.split_once('.') {
@@ -145,6 +148,9 @@ Component: {component:?}");
                     return true;
                 }
             }
+        } else if component == Component::RootDir {
+            // Root directory is fine
+            continue;
         } else {
             // Not a normal component
             tracing::trace!("Non-normal component in path, reject. Component: {component:?}");

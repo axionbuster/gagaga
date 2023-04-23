@@ -127,12 +127,39 @@ async fn mw_set_chroot<B>(
     next.run(req).await
 }
 
-/// Only continue if the path is valid
+/// Allow VPath to be extracted from the request
+#[async_trait]
+impl axum::extract::FromRequestParts<()> for VPath {
+    type Rejection = ApiError;
+
+    #[instrument]
+    async fn from_request_parts(
+        parts: &mut http::request::Parts,
+        state: &(),
+    ) -> ApiResult<Self> {
+        let vpath = parts
+            .extensions
+            .get::<VPath>()
+            .ok_or_else(|| {
+                ApiError::with_status(500)(anyhow!("vpath not set"))
+            })
+            .map(|vpath| vpath.clone())?;
+        Ok(vpath)
+    }
+}
+
+/// Virtual Path (as an HTTP extension)
+#[derive(Debug, Clone)]
+struct VPath(pub PathBuf);
+
+/// Only continue if the path is valid.
+/// 
+/// Set VPath in the request extensions.
 #[instrument(skip(req, next), err)]
 async fn mw_guard_virt_path(
     Chroot(chroot): Chroot,
-    vpath: Option<axum::extract::Path<std::path::PathBuf>>,
-    req: http::Request<Body>,
+    vpath: Option<axum::extract::Path<PathBuf>>,
+    mut req: http::Request<Body>,
     next: Next<Body>,
 ) -> ApiResult<impl IntoResponse> {
     let vpath = match vpath {
@@ -140,14 +167,19 @@ async fn mw_guard_virt_path(
         None => "/".into(),
     };
 
+    let real_path = chroot.join(vpath.clone());
+
     // Quick check
-    if bad_path1(&vpath) {
+    if bad_path1(&real_path) {
         return Err((
             StatusCode::BAD_REQUEST,
-            anyhow!("bad path: {:?}", vpath),
+            anyhow!("bad real path: {:?}", real_path),
         )
             .into());
     }
+
+    // Set
+    req.extensions_mut().insert(VPath(vpath));
 
     Ok(next.run(req).await)
 }
@@ -174,7 +206,7 @@ async fn mw_nosniff<B: Debug>(
 #[instrument(err)]
 async fn api_thumbnail<const N: usize>(
     Chroot(chroot): Chroot,
-    axum::extract::Path(vpath): axum::extract::Path<String>,
+    VPath(vpath): VPath,
 ) -> ApiResult<impl IntoResponse> {
     // Open file, read file, check length
     let real_path = chroot.join(&vpath);
@@ -214,7 +246,7 @@ async fn api_thumbnail<const N: usize>(
 #[instrument(err)]
 async fn api_list(
     Chroot(chroot): Chroot,
-    axum::extract::Path(vpath): axum::extract::Path<std::path::PathBuf>,
+    VPath(vpath): VPath,
 ) -> ApiResult<impl IntoResponse> {
     let mut dirs = vec![];
     let mut files = vec![];
