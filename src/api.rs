@@ -227,7 +227,7 @@ async fn mw_nosniff<B: Debug>(
 ///
 /// Thumbnail a file with a maximum tolerance of reading (N) MB.
 #[instrument(err)]
-async fn api_thumbnail<const N: usize>(
+async fn api_thumb<const LIMITMB: usize>(
     Chroot(chroot): Chroot,
     VPath(vpath): VPath,
 ) -> ApiResult<impl IntoResponse> {
@@ -237,23 +237,25 @@ async fn api_thumbnail<const N: usize>(
         .await
         .context("open file")
         .map_err(ApiError::with_status(404))?;
-    let mut buf = BytesMut::with_capacity(N + 1);
-    let n = file
-        .read_buf(&mut buf)
-        .await
-        .context("read file")
-        .map_err(ApiError::with_status(404))?;
-    if n > N {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            anyhow!("file too large ({n} > {N})"),
-        )
-            .into());
+    // +1 is to check whether it was truncated (sign of an oversized file)
+    let cap = LIMITMB * 1024 * 1024 + 1;
+    let mut buf = BytesMut::new();
+    loop {
+        let n = file
+            .read_buf(&mut buf)
+            .await
+            .context("read file")
+            .map_err(ApiError::with_status(404))?;
+        if n == 0 {
+            break;
+        }
+        if buf.len() > cap {
+            return Err(ApiError::with_status(404)(anyhow!("file too large")));
+        }
     }
 
-    // Thumbnail, width 16, height 16, quality 30
-    let buf = buf.to_vec();
-    let jpg = tokio::spawn(async move { ithumbjpg::<16, 16, 30>(&buf) })
+    // Make thumbnail. ::<width, height, quality%>
+    let jpg = tokio::spawn(async move { ithumbjpg::<16, 16, 50>(&buf) })
         .await
         .context("spawn thumbnailing task")
         .map_err(ApiError::with_status(500))?
@@ -362,6 +364,20 @@ pub fn build_list_api(chroot: PathBuf) -> axum::Router<(), axum::body::Body> {
     axum::Router::new()
         .route("/*vpath", get(api_list))
         .route("/", get(api_list))
+        .layer(from_fn(mw_guard_virt_path))
+        .layer(from_fn(mw_nosniff))
+        .layer(from_fn_with_state(chroot, mw_set_chroot))
+}
+
+/// Build a thumbnail server API
+#[instrument]
+pub fn build_thumb_api(chroot: PathBuf) -> axum::Router<(), axum::body::Body> {
+    use axum::routing::get;
+
+    // Use a limit (10 MB) for reading the file.
+    axum::Router::new()
+        .route("/*vpath", get(api_thumb::<10>))
+        .route("/", get(api_thumb::<10>))
         .layer(from_fn(mw_guard_virt_path))
         .layer(from_fn(mw_nosniff))
         .layer(from_fn_with_state(chroot, mw_set_chroot))
