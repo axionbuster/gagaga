@@ -1,4 +1,4 @@
-//! Virtual file system
+//! File system
 //!
 //! Currently, handles the following:
 //! - Defining an object as one of file, directory, link or unknown
@@ -11,9 +11,8 @@ use std::{
     pin::Pin,
 };
 
-use async_stream::stream;
-use async_trait::async_trait;
-use tokio::fs::DirEntry;
+use anyhow::bail;
+use async_stream::try_stream;
 use tokio_stream::Stream;
 
 use crate::prim::*;
@@ -166,6 +165,14 @@ pub enum FileType {
     Link,
 }
 
+/// A label that signifies that some path buffer is relative to the
+/// virtual root
+pub type VirtualPath = Path;
+
+/// A label that signifies that some path buffer is relative to the
+/// computer (real root)
+pub type RealPath = Path;
+
 /// A path relative to the VFS root.
 ///
 /// Unless stated otherwise, it's not guaranteed that the path
@@ -198,165 +205,108 @@ pub struct FileMetadata {
     pub last_modified: Option<DateTime>,
 }
 
-/// A stream of FileMetadata's
-pub type FileMetadataStream = Pin<Box<dyn Stream<Item = Result<FileMetadata>>>>;
+/// Convert a pair of the UTF-8 file name and native [Metadata](std::fs::Metadata)
+/// to a [`FileMetadata`].
+impl<S> TryFrom<(S, std::fs::Metadata)> for FileMetadata
+where
+    S: TryInto<String>,
+{
+    type Error = Error;
 
-/// Listing function
-#[async_trait]
-pub trait ListDirectory: Send + Sync {
-    /// List a directory from a path relative to the VFS root
-    async fn list_directory(
-        &self,
-        virt_path: impl AsRef<Path> + Debug + Send + Sync,
-    ) -> Result<FileMetadataStream>;
-}
-
-/// A Tokio implementation
-#[derive(Debug)]
-pub struct TokioBacked {
-    /// Root of the filesystem in the real world, absolute path
-    pub real_root: PathBuf,
-}
-
-#[async_trait]
-impl ListDirectory for TokioBacked {
-    #[instrument]
-    async fn list_directory(
-        &self,
-        virt_path: impl AsRef<Path> + Debug + Send + Sync,
-    ) -> Result<FileMetadataStream> {
-        let read_dir =
-            tokio::fs::read_dir(self.real_root.join(virt_path.as_ref()))
-                .await?;
-        let read_dir = tokio_stream::wrappers::ReadDirStream::new(read_dir);
-        let read_dir = map1(read_dir);
-        let read_dir = map2(read_dir);
-        Ok(Box::pin(read_dir))
-    }
-}
-
-/// Convert a stream of [`DirEntry`]'s to ([`String`] \[filename\], [`std::fs::Metadata`])
-#[instrument(skip(stream))]
-fn map1<S: Stream<Item = std::io::Result<DirEntry>>>(
-    stream: S,
-) -> impl Stream<Item = Result<(String, std::fs::Metadata)>> {
-    stream! {
-        for await de in stream {
-            let de = de?;
-            let md = de.metadata().await?;
-            let fna = de.file_name();
-            let fna = fna.to_str().ok_or_else(|| anyhow::anyhow!("filename {fna:?} not valid Unicode"));
-            let yil = fna.map(|fna| (fna.to_string(), md)).map_err(Error::IO);
-            yield yil;
-        }
-    }
-}
-
-/// Convert a stream of ([`String`] \[filename\], [`std::fs::Metadata`]) to [`FileMetadata`]
-#[instrument(skip(stream))]
-fn map2<S: Stream<Item = Result<(String, std::fs::Metadata)>>>(
-    stream: S,
-) -> impl Stream<Item = Result<FileMetadata>> {
-    stream! {
-        for await md in stream {
-            if let Err(e) = md {
-                yield Err(e);
-                continue;
-            }
-            let md = md.unwrap();
-
-            let (fna, md) = md;
-            let fty = md.file_type();
-            let fty = if fty.is_file() {
-                FileType::RegularFile
-            } else if fty.is_dir() {
-                FileType::Directory
-            } else if fty.is_symlink() {
-                FileType::Link
-            } else {
-                yield Err(Error::IO(anyhow::anyhow!("Unknown file type")));
-                continue;
-            };
-            let lmo = md.modified().ok().map(DateTime::from);
-
-            yield Ok(FileMetadata {
-                file_type: fty,
-                file_name: fna,
-                size: md.len(),
-                last_modified: lmo
-            });
-        }
-    }
-}
-
-/// VFS functionality that reads files' metadata
-#[async_trait]
-pub trait ReadMetadata: Send + Sync {
-    /// Read metadata for a file
-    async fn read_metadata(
-        &self,
-        virt_path: impl AsRef<Path> + Debug + Send + Sync + Clone,
-    ) -> Result<FileMetadata>;
-}
-
-#[async_trait]
-impl ReadMetadata for TokioBacked {
-    #[instrument]
-    async fn read_metadata(
-        &self,
-        virt_path: impl AsRef<Path> + Debug + Send + Sync + Clone,
-    ) -> Result<FileMetadata> {
-        let vpa = virt_path.clone();
-        let fna = vpa
-            .as_ref()
-            .file_name()
-            .ok_or_else(|| Error::IO(anyhow::anyhow!("no file name")))?;
-        let fna = fna.to_str().ok_or_else(|| {
-            Error::IO(anyhow::anyhow!("filename {fna:?} not valid Unicode"))
-        })?;
-        let md = tokio::fs::metadata(virt_path).await.map_err(|e| {
-            Error::IO(anyhow::anyhow!("get metadata {fna:?}: {e}"))
-        })?;
-        let fty = md.file_type();
-        let fty = if fty.is_file() {
+    fn try_from(
+        value: (S, std::fs::Metadata),
+    ) -> std::result::Result<Self, Self::Error> {
+        let (fna, fme) = value;
+        let fna = fna.try_into().map_err(|_| anyhow!("bad utf-8"))?;
+        let fty = if fme.is_file() {
             FileType::RegularFile
-        } else if fty.is_dir() {
+        } else if fme.is_dir() {
             FileType::Directory
-        } else if fty.is_symlink() {
+        } else if fme.file_type().is_symlink() {
             FileType::Link
         } else {
-            return Err(Error::IO(anyhow::anyhow!("Unknown file type")));
+            bail!("unknown file type");
         };
-        let lmo = md.modified().ok().map(DateTime::from);
-
-        Ok(FileMetadata {
+        let lmo = fme.modified().map(|st| st.into()).ok();
+        Ok(Self {
             file_type: fty,
-            file_name: fna.to_string(),
-            size: md.len(),
+            file_name: fna,
+            size: fme.len(),
             last_modified: lmo,
         })
     }
 }
 
-/// VFS functionality that canonicalizes a path by accessing it in
-/// the real filesystem
-#[async_trait]
-pub trait Canonicalize {
-    /// Canonicalize a path stated relative to the VFS root
-    async fn canonicalize(
-        &self,
-        virt_path: impl AsRef<Path> + Debug + Send + Sync,
-    ) -> Result<PathBuf>;
+/// A stream of FileMetadata's
+pub type FileMetadataStream = Pin<Box<dyn Stream<Item = Result<FileMetadata>>>>;
+
+/// Asynchronously list a directory
+#[instrument]
+pub async fn list_directory(
+    chroot: impl AsRef<RealPath> + Debug + Send + Sync,
+    virt_path: impl AsRef<VirtualPath> + Debug + Send + Sync,
+) -> Result<FileMetadataStream> {
+    let read_dir =
+        tokio::fs::read_dir(chroot.as_ref().join(virt_path.as_ref()))
+            .await
+            .context("open read_dir")?;
+    let read_dir = tokio_stream::wrappers::ReadDirStream::new(read_dir);
+    fn make_stream(
+        read_dir: tokio_stream::wrappers::ReadDirStream,
+    ) -> impl Stream<Item = Result<FileMetadata>> {
+        try_stream! {
+            for await de in read_dir {
+                // Find the file name
+                let de = de
+                    .context("get directory entry")?;
+                let fna = de
+                    .file_name()
+                    .to_str()
+                    .ok_or_else(|| anyhow!("file name bad utf-8"))?
+                    .to_string();
+                // Find the metadata
+                let md = de.metadata().await.context("get metadata")?;
+                // Go
+                let md: FileMetadata = (fna, md).try_into()?;
+                yield md;
+            }
+        }
+    }
+    let read_dir = make_stream(read_dir);
+    Ok(Box::pin(read_dir))
 }
 
-#[async_trait]
-impl Canonicalize for TokioBacked {
-    async fn canonicalize(
-        &self,
-        virt_path: impl AsRef<Path> + Debug + Send + Sync,
-    ) -> Result<PathBuf> {
-        let real_path = self.real_root.join(virt_path.as_ref());
-        let real_path = tokio::fs::canonicalize(real_path).await?;
-        Ok(real_path)
-    }
+/// Read the metadata of an individual file
+#[instrument]
+pub async fn read_metadata(
+    chroot: impl AsRef<RealPath> + Debug + Send + Sync,
+    virt_path: impl AsRef<VirtualPath> + Debug + Send + Sync,
+) -> Result<FileMetadata> {
+    // Find the file name
+    let fna = virt_path
+        .as_ref()
+        .file_name()
+        .ok_or_else(|| anyhow!("no file name"))?
+        .to_str()
+        .ok_or_else(|| anyhow!("bad utf-8"))?
+        .to_string();
+
+    // Get the metadata
+    let md = tokio::fs::metadata(virt_path)
+        .await
+        .context("get metadata")?;
+
+    // Convert the metadata to a FileMetadata
+    Ok((fna, md).try_into()?)
+}
+
+/// Canonicalize a path by accessing the file system
+#[instrument]
+pub async fn canonicalize(
+    chroot: impl AsRef<RealPath> + Debug + Send + Sync,
+    virt_path: impl AsRef<VirtualPath> + Debug + Send + Sync,
+) -> Result<PathBuf> {
+    let real_path = chroot.as_ref().join(virt_path.as_ref());
+    let real_path = tokio::fs::canonicalize(real_path).await?;
+    Ok(real_path)
 }

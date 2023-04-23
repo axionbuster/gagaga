@@ -8,11 +8,8 @@ use axum::{
 use thiserror::Error;
 
 use crate::{
+    fs::{bad_path1, canonicalize, read_metadata, FileType},
     prim::*,
-    vfs::{
-        bad_path1, Canonicalize, FileType, ReadMetadata, TokioBacked,
-        VirtualPathBuf,
-    },
 };
 
 /// API Error. This gets converted into Axum error responses
@@ -63,46 +60,32 @@ async fn mw_guard_virt_path<B: Debug>(
     req: axum::http::Request<B>,
     next: Next<B>,
 ) -> ApiResult<impl IntoResponse> {
-    // Quick validation
+    // Quick check
     if bad_path1(&vpath) {
-        return Err(ApiError::BadRequest(anyhow::anyhow!("Bad path").into()));
+        return Err(ApiError::BadRequest(anyhow!("bad path: {}", vpath)));
     }
 
     // Canonicalize the path
-    let can = TokioBacked {
-        real_root: state.chroot.clone(),
-    };
-    let cpath = can.canonicalize(vpath).await.map_err(ApiError::NotFound)?;
+    let cpath = canonicalize(&state.chroot, vpath)
+        .await
+        .map_err(ApiError::NotFound)?;
 
     // Strip the prefix to get the virtual path back.
     // It also checks whether the path is inside the chroot.
     let vpath = cpath
         .strip_prefix(&state.chroot)
-        .with_context(|| {
-            format!(
-                "while stripping prefix {:?} from canonical {:?}",
-                state.chroot, cpath
-            )
-        })
-        .map_err(Error::IO)
+        .context("strip")
         .map_err(ApiError::NotFound)?;
 
-    // Check the metadata. Beware of TOCTTOU attacks if an internet-
-    // connected user may be able to change the filesystem.
-    // Here we assume that the filesystem is in full control of the
-    // server.
-    let meta = can
-        .read_metadata(&vpath)
+    // Check the metadata
+    let meta = read_metadata(&state.chroot, &vpath)
         .await
-        .with_context(|| {
-            format!("while getting metadata for virtual {:?}", vpath)
-        })
-        .map_err(Error::IO)
+        .context("read metadata")
         .map_err(ApiError::NotFound)?;
     if !matches!(meta.file_type, FileType::RegularFile | FileType::Directory) {
-        return Err(ApiError::BadRequest(
-            anyhow::anyhow!("Bad file type").into(),
-        ));
+        return Err(ApiError::NotFound(anyhow!(
+            "not a regular file or directory"
+        )));
     }
 
     // In the end, the original virtual path gets admitted.

@@ -1,10 +1,10 @@
 //! File Lister --- list files in a directory (don't download)
 
 mod api;
+mod fs;
 mod prim;
 mod thcache;
 mod thumb;
-mod vfs;
 
 #[tokio::main]
 async fn main() {

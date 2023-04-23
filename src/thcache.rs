@@ -1,12 +1,12 @@
 //! Thumbnail caching
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Debug};
 
 use tokio::sync::mpsc;
 
 use crate::{
+    fs::{read_metadata, RealPath, VirtualPathBuf},
     prim::*,
-    vfs::{ReadMetadata, VirtualPathBuf},
 };
 
 /// Inspect the response from the cache process
@@ -40,10 +40,9 @@ pub struct CacheProcess(mpsc::UnboundedSender<Msg>);
 
 impl CacheProcess {
     /// Permanently spawn a cache process.
-    ///
-    /// The lifetime of `vfs` is `'static` because of the restriction
-    /// of `tokio::spawn`.
-    pub fn spawn(vfs: impl ReadMetadata + 'static) -> Self {
+    pub fn spawn(
+        chroot: impl AsRef<RealPath> + Send + Sync + Debug + 'static,
+    ) -> Self {
         // Some channels
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         tokio::spawn(async move {
@@ -59,7 +58,7 @@ impl CacheProcess {
                     }
                     Some(Msg::Get { srvpath, rpy }) => {
                         tracing::trace!("Getting from cache");
-                        let meta = vfs.read_metadata(&srvpath).await;
+                        let meta = read_metadata(&chroot, &srvpath).await;
                         let fslmo = meta.ok().and_then(|m| m.last_modified);
                         let ca = hmp.get(&srvpath);
                         let fresh = fslmo.is_some()
