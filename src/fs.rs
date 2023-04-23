@@ -26,8 +26,6 @@ use crate::prim::*;
 /// - Invalid UTF-8
 /// - ASCII control characters
 /// - `/ < > : " / \ | ? *`
-/// - `CON PRN AUX NUL COM[1-9] LPT[1-9]` by themselves or by
-/// themselves before the extension
 /// - Non-normal paths (such as `..`, `.` or `//`)
 ///
 /// It's possible that the longest path on Windows that is
@@ -143,32 +141,6 @@ though whole path is UTF-8. (utf8-len: {len} bytes). Reject.",
                 tracing::trace!("Path component has leading or trailing whitespace ({bad:?}, value {val}), reject. \
 Component: {component:?}", val = bad as u32);
                 return true;
-            }
-
-            // Trim and then uppercase before checking against reserved names
-            let component = component.trim().to_ascii_uppercase();
-            let component = component.as_str();
-
-            // Check against reserved names
-            if matches!(component, "CON" | "PRN" | "AUX" | "NUL") {
-                tracing::trace!("Path component is a reserved name, reject. Component: {component:?}");
-                return true;
-            }
-
-            // Check against reserved names with numbers
-            if matches!(&component.get(..=3), Some("COM" | "LPT")) {
-                // A single digit
-                let c = component.get(4..).and_then(|s| s.chars().next());
-                if c.is_none() {
-                    tracing::trace!("A component of COM or LPT by itself is fine, accept. Component: {component:?}");
-                    continue;
-                }
-                let c = c.unwrap();
-                if c.is_ascii_digit() {
-                    tracing::trace!("Path component is a reserved name, reject. Component: {component:?}");
-                    return true;
-                }
-                // It will reject things like "COM1", "COM123", "COM2.ppt", etc.
             }
         } else if component == Component::RootDir {
             // Root directory is fine
