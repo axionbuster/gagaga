@@ -27,6 +27,76 @@ use tower_http::services::ServeDir;
 use crate::{fs::*, prim::*, thumb::*};
 
 /// API Error
+///
+/// ## Creation examples
+///
+/// Type 1. Creation from a tuple of a [`StatusCode`] and an [`type@Error`].
+///
+/// (Any [`anyhow::Error`] can be converted to an [`ApiError`])
+///
+/// ```rust
+/// use crate::api::ApiError;
+/// use http::StatusCode;
+///
+/// let err: ApiError = (StatusCode::NOT_FOUND, "Not Found".into()).into();
+/// ```
+///
+/// Type 2a. Creation using the `with_status` method.
+///
+/// ```rust
+/// use crate::api::ApiError;
+///
+/// let err = ApiError::with_status(404)("Not Found".into());
+/// ```
+///
+/// Type 2b. Same, but using an explicit name.
+///
+/// ```rust
+/// use crate::api::ApiError;
+/// use http::StatusCode;
+///
+/// let err = ApiError::with_status(StatusCode::NOT_FOUND)("Not Found".into());
+/// ```
+///
+/// Type 3a. Using `map_err` to convert any [`anyhow::Error`] to an [`ApiError`].
+///
+/// ```rust
+/// use crate::api::ApiError;
+/// use anyhow::anyhow;
+///
+/// let wrong = Err(anyhow!("Not Found"));
+///
+/// let err: ApiError = wrong.map_err(ApiError::with_status(404));
+/// ```
+///
+/// Type 3b. Same, but converting anything that implements [`Into<Error>`]
+/// by using [`anyhow::Context`].
+///
+/// ```rust
+/// use crate::api::ApiError;
+/// use anyhow::Context;
+/// use std::io::Error;
+///
+/// // Just some kind of non-anyhow error
+/// let wrong = Err(Error::from_raw_os_error(2));
+///
+/// let err: ApiError = wrong
+///     .context("Not Found")
+///     .map_err(ApiError::with_status(404));
+/// ```
+///
+/// ## Using [`ApiError`] and [`ApiResult`] in [`axum`] endpoints
+///
+/// Just throw it. It will be converted into plain text (yes, just
+/// plain text, not JSON) with the status code you provided.
+///
+/// The end user will see the canonical error message if one is
+/// associated with the status code. If the canonical error message
+/// doesn't exist, the user will be greated with an empty response.
+///
+/// The HTTP status code will be set to the one you provided.
+///
+/// The headers set by your middleware won't be affected.
 #[derive(Debug, Error)]
 pub struct ApiError(http::StatusCode, #[source] Error);
 
