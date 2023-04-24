@@ -237,7 +237,7 @@ async fn api_thumb<const LIMITMB: usize>(
         .await
         .context("open file")
         .map_err(ApiError::with_status(404))?;
-    // +1 is to check whether it was truncated (sign of an oversized file)
+    // +1 is to detect over-reading.
     let cap = LIMITMB * 1024 * 1024 + 1;
     let mut buf = BytesMut::new();
     loop {
@@ -342,7 +342,6 @@ async fn api_list(
         let mut value = json!({
             "name": md.file_name,
         });
-        let null = json!(null);
         value["type"] = match md.file_type {
             FileType::Directory => json!("dir"),
             FileType::RegularFile => json!("file"),
@@ -355,14 +354,11 @@ async fn api_list(
                     "in serfmta, unhandled variant: {ft:?}",
                     ft = md.file_type
                 );
-                null.clone()
+                json!(null)
             }
         };
-        value["size"] =
-            md.size.map_or_else(|| null.clone(), |size| json!(size));
-        value["mtime"] = md
-            .last_modified
-            .map_or_else(|| null.clone(), |t| json!(t.http()));
+        value["size"] = json!(md.size);
+        value["mtime"] = json!(md.last_modified.map(|t| t.http()));
         value
     }
 
