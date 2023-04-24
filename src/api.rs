@@ -222,7 +222,7 @@ impl axum::extract::FromRequestParts<()> for VPath {
 
 /// Virtual Path (as an HTTP extension)
 #[derive(Debug, Clone)]
-struct VPath(pub PathBuf);
+struct VPath(Arc<PathBuf>);
 
 /// Only continue if the path is valid.
 ///
@@ -275,7 +275,8 @@ async fn mw_guard_virt_path(
     }
 
     // Set
-    req.extensions_mut().insert(VPath(vpath.into()));
+    req.extensions_mut()
+        .insert(VPath(Arc::new(vpath.to_owned())));
 
     Ok(next.run(req).await)
 }
@@ -305,7 +306,7 @@ async fn api_thumb<const LIMITMB: usize>(
     VPath(vpath): VPath,
 ) -> ApiResult<impl IntoResponse> {
     // Open file, read file, check length
-    let real_path = chroot.join(&vpath);
+    let real_path = chroot.join(&*vpath);
     let mut file = tokio::fs::File::open(&real_path)
         .await
         .context("open file")
@@ -350,7 +351,7 @@ async fn mw_cache_http_reval_lmo(
     next: Next<Body>,
 ) -> ApiResult<Response> {
     // Read the metadata from the file system and its last modified -> lmo
-    let md = read_metadata(&*chroot, &vpath).await;
+    let md = read_metadata(&*chroot, &*vpath).await;
     let md = match md {
         Ok(md) => md,
         Err(e) => {
@@ -456,7 +457,7 @@ async fn api_list(
     let now_sgnunixsec = DateTime::now().sgnunixsec();
 
     // Read the directory
-    let mut stream = list_directory(&*chroot, &vpath)
+    let mut stream = list_directory(&*chroot, &*vpath)
         .await
         .context("list directory")
         .map_err(ApiError::with_status(404))?;
