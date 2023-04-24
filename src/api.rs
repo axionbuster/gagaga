@@ -6,7 +6,7 @@
 //! - Middleware (e.g., nosniff, http caching)
 //! - Endpoints (with routing)
 
-use std::{fmt::Debug, path::PathBuf};
+use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
 use axum::{
@@ -166,7 +166,7 @@ async fn follow_get_md(
 /// This is the directory to serve files from, shared across all
 /// services and requests, and set once at startup.
 #[derive(Debug, Clone)]
-struct Chroot(pub PathBuf);
+struct Chroot(Arc<PathBuf>);
 
 /// Allow Chroot to be extracted from the request
 #[async_trait]
@@ -192,7 +192,7 @@ impl axum::extract::FromRequestParts<()> for Chroot {
 /// Set the Chroot in the request
 #[instrument(skip(req, next))]
 async fn mw_set_chroot<B>(
-    State(chroot): State<PathBuf>,
+    State(chroot): State<Arc<PathBuf>>,
     mut req: http::Request<B>,
     next: Next<B>,
 ) -> impl IntoResponse {
@@ -254,10 +254,10 @@ async fn mw_guard_virt_path(
     tracing::trace!("real_path: {real_path:?}");
 
     // Inclusivity check (follow symlinks)
-    let real_path = canonicalize(&chroot, &vpath)
+    let real_path = canonicalize(&*chroot, &vpath)
         .await
         .map_err(ApiError::with_status(404))?;
-    if !real_path.starts_with(chroot) {
+    if !real_path.starts_with(&*chroot) {
         return Err((
             StatusCode::BAD_REQUEST,
             anyhow!("chk 2/3 bad real path (incl): {real_path:?}"),
@@ -350,7 +350,7 @@ async fn mw_cache_http_reval_lmo(
     next: Next<Body>,
 ) -> ApiResult<Response> {
     // Read the metadata from the file system and its last modified -> lmo
-    let md = read_metadata(&chroot, &vpath).await;
+    let md = read_metadata(&*chroot, &vpath).await;
     let md = match md {
         Ok(md) => md,
         Err(e) => {
@@ -456,7 +456,7 @@ async fn api_list(
     let now_sgnunixsec = DateTime::now().sgnunixsec();
 
     // Read the directory
-    let mut stream = list_directory(&chroot, &vpath)
+    let mut stream = list_directory(&*chroot, &vpath)
         .await
         .context("list directory")
         .map_err(ApiError::with_status(404))?;
@@ -509,7 +509,9 @@ async fn api_list(
 
 /// Build a complete router for the list API
 #[instrument]
-pub fn build_list_api(chroot: PathBuf) -> axum::Router<(), axum::body::Body> {
+pub fn build_list_api(
+    chroot: Arc<PathBuf>,
+) -> axum::Router<(), axum::body::Body> {
     axum::Router::new()
         .route("/*vpath", get(api_list))
         .route("/", get(api_list))
@@ -520,7 +522,9 @@ pub fn build_list_api(chroot: PathBuf) -> axum::Router<(), axum::body::Body> {
 
 /// Build a thumbnail server API
 #[instrument]
-pub fn build_thumb_api(chroot: PathBuf) -> axum::Router<(), axum::body::Body> {
+pub fn build_thumb_api(
+    chroot: Arc<PathBuf>,
+) -> axum::Router<(), axum::body::Body> {
     // Use a limit (10 MB) for reading the file.
     axum::Router::new()
         .route("/*vpath", get(api_thumb::<10>))
@@ -534,10 +538,10 @@ pub fn build_thumb_api(chroot: PathBuf) -> axum::Router<(), axum::body::Body> {
 /// Build a download server API
 #[instrument]
 pub fn build_download_api(
-    chroot: PathBuf,
+    chroot: Arc<PathBuf>,
 ) -> axum::Router<(), axum::body::Body> {
     let servedir =
-        ServeDir::new(&chroot).append_index_html_on_directories(false);
+        ServeDir::new(chroot.as_ref()).append_index_html_on_directories(false);
 
     axum::Router::new()
         .route("/*vpath", get_service(servedir.clone()))

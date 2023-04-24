@@ -1,6 +1,6 @@
 //! File Lister --- list files in a directory (don't download)
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use tokio::join;
 use tower_http::trace::TraceLayer;
@@ -17,6 +17,7 @@ async fn main() {
     let tracer = TraceLayer::new_for_http();
 
     let chroot = PathBuf::from("/");
+    let chroot = Arc::new(chroot);
 
     // Bind list at 2999
     let list = api::build_list_api(chroot.clone()).layer(tracer.clone());
