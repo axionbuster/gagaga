@@ -8,7 +8,6 @@ use tower_http::trace::TraceLayer;
 mod api;
 mod fs;
 mod prim;
-mod thcache;
 mod thumb;
 
 #[tokio::main]

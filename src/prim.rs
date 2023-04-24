@@ -46,10 +46,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct DateTime(OffsetDateTime);
 
 impl DateTime {
-    /// Now
-    pub fn now() -> Self {
-        Self(OffsetDateTime::now_utc())
-    }
+    // /// Now
+    // pub fn now() -> Self {
+    //     Self(OffsetDateTime::now_utc())
+    // }
 
     /// RFC3339 with Zulu
     #[instrument]
