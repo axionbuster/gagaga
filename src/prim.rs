@@ -2,9 +2,9 @@
 //!
 //! - Error and Result
 //! - Time handling
+//! - Logging and [`macro@instrument`] macro
 
 pub use anyhow::{anyhow, Context};
-pub use serde::Serialize;
 pub use tracing::instrument;
 
 use std::{cmp::Ordering, fmt::Debug, time::SystemTime};
@@ -40,17 +40,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// // If they execute in the same second, they will be equal.
 /// assert_eq!(a.seccmp(&b), Ordering::Equal);
 /// ```
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Hash,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DateTime(OffsetDateTime);
 
 impl DateTime {
-    // /// Now
-    // pub fn now() -> Self {
-    //     Self(OffsetDateTime::now_utc())
-    // }
-
     /// RFC3339 with Zulu
     #[instrument]
     pub fn rfc3339z(&self) -> String {

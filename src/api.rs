@@ -1,15 +1,21 @@
 //! All the web-facing API stuff goes here
+//!
+//! - Error handling (for the API)
+//! - State
+//! - Intermediary types
+//! - Middleware (e.g., nosniff, http caching)
+//! - Endpoints (with routing)
 
 use std::{fmt::Debug, path::PathBuf};
 
 use async_trait::async_trait;
 use axum::{
     body::Body,
-    debug_handler,
     extract::State,
     http::{self, header, HeaderValue, StatusCode},
     middleware::{from_fn, from_fn_with_state, Next},
     response::{IntoResponse, Response},
+    routing::{get, get_service},
 };
 use bytes::BytesMut;
 use serde_json::{json, Value};
@@ -18,14 +24,7 @@ use tokio::io::AsyncReadExt;
 use tokio_stream::StreamExt;
 use tower_http::services::ServeDir;
 
-use crate::{
-    fs::{
-        bad_path1, canonicalize, list_directory, read_metadata, FileMetadata,
-        FileType, RealPath, VirtualPath,
-    },
-    prim::*,
-    thumb::ithumbjpg,
-};
+use crate::{fs::*, prim::*, thumb::*};
 
 /// API Error
 #[derive(Debug, Error)]
@@ -333,7 +332,6 @@ async fn mw_cache_http_reval_lmo(
 }
 
 /// Handle listing the directory into a JSON response
-#[debug_handler]
 #[instrument(err)]
 async fn api_list(
     Chroot(chroot): Chroot,
@@ -425,8 +423,6 @@ async fn api_list(
 /// Build a complete router for the list API
 #[instrument]
 pub fn build_list_api(chroot: PathBuf) -> axum::Router<(), axum::body::Body> {
-    use axum::routing::get;
-
     axum::Router::new()
         .route("/*vpath", get(api_list))
         .route("/", get(api_list))
@@ -438,8 +434,6 @@ pub fn build_list_api(chroot: PathBuf) -> axum::Router<(), axum::body::Body> {
 /// Build a thumbnail server API
 #[instrument]
 pub fn build_thumb_api(chroot: PathBuf) -> axum::Router<(), axum::body::Body> {
-    use axum::routing::get;
-
     // Use a limit (10 MB) for reading the file.
     axum::Router::new()
         .route("/*vpath", get(api_thumb::<10>))
@@ -459,7 +453,7 @@ pub fn build_download_api(
         ServeDir::new(&chroot).append_index_html_on_directories(false);
 
     axum::Router::new()
-        .fallback_service(servedir)
+        .fallback_service(get_service(servedir))
         .layer(from_fn(mw_guard_virt_path))
         .layer(from_fn(mw_nosniff))
         .layer(from_fn_with_state(chroot, mw_set_chroot))

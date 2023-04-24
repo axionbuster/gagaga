@@ -3,7 +3,14 @@
 //! Currently, handles the following:
 //! - Defining an object as one of file, directory, link or unknown
 //! - Defining the metadata for an object
+//! - Reading said metadata
 //! - Listing files in a directory as an asynchronous stream
+//! - Canonicalizing a file by following links
+//! - Deciding heuristically whether a file path is invalid
+//!
+//! On the metadata side, the file name and some rest of the
+//! [`std::fs::Metadata`] are merged, which makes things really
+//! convenient, since [`std::fs::Metadata`] doesn't have the file name.
 
 use std::{
     fmt::Debug,
