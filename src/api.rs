@@ -162,6 +162,9 @@ async fn follow_get_md(
 }
 
 /// The Chroot type
+///
+/// This is the directory to serve files from, shared across all
+/// services and requests, and set once at startup.
 #[derive(Debug, Clone)]
 struct Chroot(pub PathBuf);
 
@@ -186,7 +189,7 @@ impl axum::extract::FromRequestParts<()> for Chroot {
     }
 }
 
-/// Set the Chroot from the global state, or return 500.
+/// Set the Chroot in the request
 #[instrument(skip(req, next))]
 async fn mw_set_chroot<B>(
     State(chroot): State<PathBuf>,
