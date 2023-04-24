@@ -66,7 +66,11 @@ pub fn bad_path1(p: impl AsRef<Path> + Debug) -> bool {
     struct _PrintPathOnDrop<'a>(&'a Path);
     impl Drop for _PrintPathOnDrop<'_> {
         fn drop(&mut self) {
-            tracing::trace!("Path examined: {:?}", self.0);
+            tracing::trace!(
+                "Path examined: (os_str.len = {len}) {a:?}",
+                len = self.0.as_os_str().len(),
+                a = self.0
+            );
         }
     }
     #[cfg(debug_assertions)]
@@ -87,23 +91,9 @@ pub fn bad_path1(p: impl AsRef<Path> + Debug) -> bool {
             if component2.is_none() {
                 // This is a highly unusual situation that should be
                 // alerted to the user. Crafted string?
-
-                // On Windows, produce a Vec<u16>.
-                // On other Unix or WASI, produce a Vec<u8>.
-                // Other platforms are not supported.
-                #[cfg(windows)]
-                let breakdown =
-                    std::os::windows::prelude::OsStrExt::encode_wide(component)
-                        .collect::<Vec<_>>();
-                #[cfg(not(windows))]
-                let breakdown =
-                    std::os::unix::prelude::OsStrExt::as_bytes(component)
-                        .to_vec();
-
                 tracing::warn!(
                     "Path component ({component:?}) not UTF-8, \
-though whole path is UTF-8. (utf8-len: {len} bytes). Reject.",
-                    len = breakdown.len()
+though whole path is UTF-8. Reject."
                 );
                 return true;
             }
@@ -145,8 +135,12 @@ though whole path is UTF-8. (utf8-len: {len} bytes). Reject.",
                     c.is_whitespace()
                 });
             if has_bad {
-                tracing::trace!("Path component has leading or trailing whitespace ({bad:?}, value {val}), reject. \
-Component: {component:?}", val = bad as u32);
+                tracing::trace!(
+                    "Path component has leading or trailing \
+whitespace ({bad:?}, value {val}), reject. \
+Component: {component:?}",
+                    val = bad as u32
+                );
                 return true;
             }
         } else if component == Component::RootDir {
@@ -154,7 +148,10 @@ Component: {component:?}", val = bad as u32);
             continue;
         } else {
             // Not a normal component
-            tracing::trace!("Non-normal component in path, reject. Component: {component:?}");
+            tracing::trace!(
+                "Non-normal component in path, reject. \
+Component: {component:?}"
+            );
             return true;
         }
     }
