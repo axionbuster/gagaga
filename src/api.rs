@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio_stream::StreamExt;
+use tower_http::services::ServeDir;
 
 use crate::{
     fs::{
@@ -444,6 +445,21 @@ pub fn build_thumb_api(chroot: PathBuf) -> axum::Router<(), axum::body::Body> {
         .route("/*vpath", get(api_thumb::<10>))
         .route("/", get(api_thumb::<10>))
         .layer(from_fn(mw_cache_http_reval_lmo))
+        .layer(from_fn(mw_guard_virt_path))
+        .layer(from_fn(mw_nosniff))
+        .layer(from_fn_with_state(chroot, mw_set_chroot))
+}
+
+/// Build a download server API
+#[instrument]
+pub fn build_download_api(
+    chroot: PathBuf,
+) -> axum::Router<(), axum::body::Body> {
+    let servedir =
+        ServeDir::new(&chroot).append_index_html_on_directories(false);
+
+    axum::Router::new()
+        .fallback_service(servedir)
         .layer(from_fn(mw_guard_virt_path))
         .layer(from_fn(mw_nosniff))
         .layer(from_fn_with_state(chroot, mw_set_chroot))

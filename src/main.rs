@@ -25,11 +25,17 @@ async fn main() {
     let list = async move { list.await.unwrap() };
 
     // Bind thumb at 2998
-    let thumb = api::build_thumb_api(chroot).layer(tracer);
+    let thumb = api::build_thumb_api(chroot.clone()).layer(tracer.clone());
     let thumb = axum::Server::bind(&"127.0.0.1:2998".parse().unwrap())
         .serve(thumb.into_make_service());
     let thumb = async move { thumb.await.unwrap() };
 
+    // Download server at 2997
+    let download = api::build_download_api(chroot).layer(tracer);
+    let download = axum::Server::bind(&"127.0.0.1:2997".parse().unwrap())
+        .serve(download.into_make_service());
+    let download = async move { download.await.unwrap() };
+
     // Go
-    join!(list, thumb);
+    join!(list, thumb, download);
 }
