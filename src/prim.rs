@@ -44,6 +44,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct DateTime(OffsetDateTime);
 
 impl DateTime {
+    /// The time as of now
+    pub fn now() -> Self {
+        Self(OffsetDateTime::now_utc())
+    }
+
     /// RFC3339 with Zulu
     #[instrument]
     pub fn rfc3339z(&self) -> String {
@@ -76,6 +81,11 @@ impl DateTime {
     /// Compare down to the second resolution (useful in HTTP)
     pub fn seccmp(&self, other: &Self) -> Ordering {
         self.0.unix_timestamp().cmp(&other.0.unix_timestamp())
+    }
+
+    /// Get the signed Unix timestamp (seconds)
+    pub fn sgnunixsec(&self) -> i64 {
+        self.0.unix_timestamp()
     }
 }
 

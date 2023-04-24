@@ -337,33 +337,50 @@ async fn api_list(
     Chroot(chroot): Chroot,
     VPath(vpath): VPath,
 ) -> ApiResult<impl IntoResponse> {
-    /// Serialize a file's metadata into a JSON object
-    fn serfmta(md: &FileMetadata) -> Value {
-        let mut value = json!({
-            "name": md.file_name,
-        });
-        value["type"] = match md.file_type {
-            FileType::Directory => json!("dir"),
-            FileType::RegularFile => json!("file"),
-            FileType::Link => json!("symlink"),
-            #[allow(unreachable_patterns)]
-            _ => {
-                // Want to guard against new variants being added,
-                // so log a warning.
-                tracing::warn!(
-                    "in serfmta, unhandled variant: {ft:?}",
-                    ft = md.file_type
-                );
-                json!(null)
-            }
+    /// Serialize a file's metadata into a JSON object.
+    ///
+    /// Convert the UNIX timestamp (seconds) into the difference
+    /// between the given variable epoch (also UNIX timestamp) and
+    /// each file's last modified time, with this equation:
+    /// ```
+    /// (last modified 2) = (given epoch) - (last modified)
+    /// ```
+    ///
+    /// for each file, a JSON array of four items is returned:
+    /// ```
+    /// [
+    ///     (file name, string),
+    ///     (file type, "fi" | "di" | "ln" | string),
+    ///     (file size, signed integer | null),
+    ///     (last modified 2, signed integer | null),
+    /// ]
+    /// ```
+    ///
+    /// Don't be surprised when (last modified 2) is sometimes
+    /// negative, though it should be generally positive.
+    ///
+    /// As of version 0.4.0 of the API (version: "040"), the file type
+    /// may be only one of "fi", "di" or "ln". In the future, other
+    /// file types may be added.
+    fn serfmeta(md: &FileMetadata, epoch: i64) -> Value {
+        let name = json!(md.file_name);
+        let type_ = match md.file_type {
+            FileType::RegularFile => json!("fi"),
+            FileType::Directory => json!("di"),
+            FileType::Link => json!("ln"),
+            // Note: if other variants are later added, I will add
+            // code to handle them here.
         };
-        value["size"] = json!(md.size);
-        value["mtime"] = json!(md.last_modified.map(|t| t.http()));
-        value
+        let size = json!(md.size);
+        let lmos = json!(md.last_modified.map(|s| epoch - s.sgnunixsec()));
+        json!([name, type_, size, lmos])
     }
 
     let mut dirs = vec![];
     let mut files = vec![];
+
+    // Measure the time now and round it down to the second
+    let now_sgnunixsec = DateTime::now().sgnunixsec();
 
     // Read the directory
     let mut stream = list_directory(&chroot, &vpath)
@@ -378,10 +395,10 @@ async fn api_list(
 
         // Categorize
         if md.file_type == FileType::RegularFile {
-            files.push(serfmta(&md));
+            files.push(serfmeta(&md, now_sgnunixsec));
             continue;
         } else if md.file_type == FileType::Directory {
-            dirs.push(serfmta(&md));
+            dirs.push(serfmeta(&md, now_sgnunixsec));
             continue;
         }
 
@@ -393,18 +410,19 @@ async fn api_list(
         }
         let md = md.unwrap();
         if md.file_type == FileType::RegularFile {
-            files.push(serfmta(&md));
+            files.push(serfmeta(&md, now_sgnunixsec));
             continue;
         } else if md.file_type == FileType::Directory {
-            dirs.push(serfmta(&md));
+            dirs.push(serfmeta(&md, now_sgnunixsec));
             continue;
         }
         // If neither type even after following, ignore.
     }
 
-    // Append the version and then serialize
+    // Append necessary metadata and then serialize
     let value = json!({
-        "version": "030",
+        "version": "040",
+        "now": now_sgnunixsec,
         "dirs": dirs,
         "files": files,
     })
@@ -449,7 +467,8 @@ pub fn build_download_api(
         ServeDir::new(&chroot).append_index_html_on_directories(false);
 
     axum::Router::new()
-        .fallback_service(get_service(servedir))
+        .route("/*vpath", get_service(servedir.clone()))
+        .route("/", get_service(servedir))
         .layer(from_fn(mw_guard_virt_path))
         .layer(from_fn(mw_nosniff))
         .layer(from_fn_with_state(chroot, mw_set_chroot))
