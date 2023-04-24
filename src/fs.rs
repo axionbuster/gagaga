@@ -115,13 +115,6 @@ though whole path is UTF-8. Reject."
                 return true;
             }
 
-            // Strip anything after the first period (.)
-            let component = if let Some((x, _)) = component.split_once('.') {
-                x
-            } else {
-                component
-            };
-
             // Detect leading or trailing whitespace in component
             // If exists, log the bad character (`bad`) and reject
             let mut bad = '\0';
