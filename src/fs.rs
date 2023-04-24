@@ -259,7 +259,7 @@ pub async fn list_directory(
 }
 
 /// Read the metadata of an individual file
-#[instrument]
+#[instrument(err)]
 pub async fn read_metadata(
     chroot: impl AsRef<RealPath> + Debug + Send + Sync,
     virt_path: impl AsRef<VirtualPath> + Debug + Send + Sync,
@@ -274,7 +274,8 @@ pub async fn read_metadata(
         .to_string();
 
     // Get the metadata
-    let md = tokio::fs::metadata(virt_path)
+    let real_path = chroot.as_ref().join(virt_path.as_ref());
+    let md = tokio::fs::metadata(real_path)
         .await
         .context("get metadata")?;
 

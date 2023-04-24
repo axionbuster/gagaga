@@ -7,9 +7,9 @@ use axum::{
     body::Body,
     debug_handler,
     extract::State,
-    http::{self, header, StatusCode},
+    http::{self, header, HeaderValue, StatusCode},
     middleware::{from_fn, from_fn_with_state, Next},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use bytes::BytesMut;
 use serde_json::{json, Value};
@@ -266,6 +266,71 @@ async fn api_thumb<const LIMITMB: usize>(
     Ok(([(header::CONTENT_TYPE, "image/jpeg")], jpg))
 }
 
+/// HTTP caching for files and directories in general by comparing
+/// If-Modified-Since (only). This requires the client to ask the
+/// server for revalidation each time the cache is used.
+#[instrument(skip(req, next), err)]
+async fn mw_cache_http_reval_lmo(
+    Chroot(chroot): Chroot,
+    VPath(vpath): VPath,
+    req: http::Request<Body>,
+    next: Next<Body>,
+) -> ApiResult<Response> {
+    // Read the metadata from the file system and its last modified -> lmo
+    let md = read_metadata(&chroot, &vpath).await;
+    let md = match md {
+        Ok(md) => md,
+        Err(e) => {
+            tracing::warn!("read_metadata: {e:?}");
+            return Ok(next.run(req).await);
+        }
+    };
+    let lmo = md.last_modified;
+    if lmo.is_none() {
+        tracing::trace!("no last modified for virtual path {vpath:?}");
+        return Ok(next.run(req).await);
+    }
+    let lmo = lmo.unwrap();
+    tracing::trace!("could read last modified from the file system");
+    // NOTE: Once I have the last modified date from the file system,
+    // I can send Cache-Control.
+
+    // Get HTTP Last Modified date from the client
+    // (If-Modified-Since) -> hmo
+    let hmo = req.headers().get(header::IF_MODIFIED_SINCE);
+    if let Some(hmo) = hmo {
+        tracing::trace!("client sent if-modified-since");
+        let hmo = hmo
+            .to_str()
+            .context("convert if-modified-since to &str")
+            .map_err(ApiError::with_status(400))?;
+        let hmo = DateTime::from_http(hmo)
+            .context("convert &str if-modified-since to DateTime")
+            .map_err(ApiError::with_status(400))?;
+        // If lmo is earlier than hmo, or equal, then fresh.
+        if lmo.seccmp(&hmo).is_le() {
+            tracing::trace!("fresh");
+            return Ok(StatusCode::NOT_MODIFIED.into_response());
+        }
+        tracing::trace!("stale");
+    } else {
+        tracing::trace!("no if-modified-since header from client");
+    }
+    // Stale or no if-modified-since header
+    let mut res = next.run(req).await;
+    res.headers_mut().append(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, no-cache"),
+    );
+    res.headers_mut().append(
+        header::LAST_MODIFIED,
+        HeaderValue::from_str(&lmo.http())
+            .context("convert last modified to &str")
+            .map_err(ApiError::with_status(500))?,
+    );
+    Ok(res.into_response())
+}
+
 /// Handle listing the directory into a JSON response
 #[debug_handler]
 #[instrument(err)]
@@ -298,7 +363,7 @@ async fn api_list(
             md.size.map_or_else(|| null.clone(), |size| json!(size));
         value["mtime"] = md
             .last_modified
-            .map_or_else(|| null.clone(), |t| json!(t.rfc2822()));
+            .map_or_else(|| null.clone(), |t| json!(t.http()));
         value
     }
 
@@ -378,6 +443,7 @@ pub fn build_thumb_api(chroot: PathBuf) -> axum::Router<(), axum::body::Body> {
     axum::Router::new()
         .route("/*vpath", get(api_thumb::<10>))
         .route("/", get(api_thumb::<10>))
+        .layer(from_fn(mw_cache_http_reval_lmo))
         .layer(from_fn(mw_guard_virt_path))
         .layer(from_fn(mw_nosniff))
         .layer(from_fn_with_state(chroot, mw_set_chroot))

@@ -248,6 +248,7 @@ dependencies = [
  "async-trait",
  "axum",
  "bytes",
+ "httpdate",
  "image",
  "mime_guess",
  "rand",
