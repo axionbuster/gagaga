@@ -168,21 +168,6 @@ async fn follow_get_md(
 #[derive(Debug, Clone)]
 struct Chroot(Arc<PathBuf>);
 
-impl Chroot {
-    /// Take then drop
-    fn take(self) -> Arc<PathBuf> {
-        self.0.clone()
-    }
-}
-
-/// Log out a message once dropped
-impl Drop for Chroot {
-    fn drop(&mut self) {
-        let sc = Arc::<_>::strong_count(&self.0);
-        tracing::trace!("Chroot::drop, sc = {sc}");
-    }
-}
-
 /// Allow Chroot to be extracted from the request
 #[async_trait]
 impl axum::extract::FromRequestParts<()> for Chroot {
@@ -239,32 +224,16 @@ impl axum::extract::FromRequestParts<()> for VPath {
 #[derive(Debug, Clone)]
 struct VPath(Arc<PathBuf>);
 
-impl VPath {
-    /// Take and the drop
-    fn take(self) -> Arc<PathBuf> {
-        self.0.clone()
-    }
-}
-
-impl Drop for VPath {
-    fn drop(&mut self) {
-        let sc = Arc::<_>::strong_count(&self.0);
-        tracing::trace!("VPath::drop, sc = {sc}");
-    }
-}
-
 /// Only continue if the path is valid.
 ///
 /// Set VPath in the request extensions.
 #[instrument(skip(req, next), err)]
 async fn mw_guard_virt_path(
-    chroot: Chroot,
+    Chroot(chroot): Chroot,
     vpath: Option<axum::extract::Path<PathBuf>>,
     mut req: http::Request<Body>,
     next: Next<Body>,
 ) -> ApiResult<impl IntoResponse> {
-    let chroot = chroot.take();
-
     // Extract PathBuf
     let vpath = vpath.map(|vpath| vpath.0).unwrap_or_default();
 
@@ -333,11 +302,9 @@ async fn mw_nosniff<B: Debug>(
 /// Thumbnail a file with a maximum tolerance of reading (N) MB.
 #[instrument(err)]
 async fn api_thumb<const LIMITMB: usize>(
-    chroot: Chroot,
-    vpath: VPath,
+    Chroot(chroot): Chroot,
+    VPath(vpath): VPath,
 ) -> ApiResult<impl IntoResponse> {
-    let chroot = chroot.take();
-    let vpath = vpath.take();
     // Open file, read file, check length
     let real_path = chroot.join(&*vpath);
     let mut file = tokio::fs::File::open(&real_path)
@@ -378,13 +345,11 @@ async fn api_thumb<const LIMITMB: usize>(
 /// server for revalidation each time the cache is used.
 #[instrument(skip(req, next), err)]
 async fn mw_cache_http_reval_lmo(
-    chroot: Chroot,
-    vpath: VPath,
+    Chroot(chroot): Chroot,
+    VPath(vpath): VPath,
     req: http::Request<Body>,
     next: Next<Body>,
 ) -> ApiResult<Response> {
-    let chroot = chroot.take();
-    let vpath = vpath.take();
     // Read the metadata from the file system and its last modified -> lmo
     let md = read_metadata(&*chroot, &*vpath).await;
     let md = match md {
@@ -443,12 +408,9 @@ async fn mw_cache_http_reval_lmo(
 /// Handle listing the directory into a JSON response
 #[instrument(err)]
 async fn api_list(
-    chroot: Chroot,
-    vpath: VPath,
+    Chroot(chroot): Chroot,
+    VPath(vpath): VPath,
 ) -> ApiResult<impl IntoResponse> {
-    let chroot = chroot.take();
-    let vpath = vpath.take();
-
     /// Serialize a file's metadata into a JSON object.
     ///
     /// Convert the UNIX timestamp (seconds) into the difference
