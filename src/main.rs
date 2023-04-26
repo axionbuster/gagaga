@@ -6,6 +6,7 @@ use tokio::join;
 use tower_http::trace::TraceLayer;
 
 mod api;
+mod basicfe;
 mod fs;
 mod prim;
 mod thumb;
@@ -18,6 +19,17 @@ async fn main() {
 
     let chroot = PathBuf::from("/");
     let chroot = Arc::new(chroot);
+
+    // Bind basicfe (front-end) at 3000
+    let basicfe_config = basicfe::BasicFrontend {
+        download_base_url: "http://127.0.0.1:2997".to_string(),
+        list_base_url: "http://127.0.0.1:2999".to_string(),
+    };
+    let basicfe =
+        basicfe::build_api_basicfe(&basicfe_config).layer(tracer.clone());
+    let basicfe = axum::Server::bind(&"127.0.0.1:3000".parse().unwrap())
+        .serve(basicfe.into_make_service());
+    let basicfe = async move { basicfe.await.unwrap() };
 
     // Bind list at 2999
     let list = api::build_list_api(chroot.clone()).layer(tracer.clone());
@@ -38,5 +50,5 @@ async fn main() {
     let download = async move { download.await.unwrap() };
 
     // Go
-    join!(list, thumb, download);
+    join!(basicfe, list, thumb, download);
 }

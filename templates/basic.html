@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browse <%= root %></title>
+</head>
+<body>
+    <h1>Browse <%= root %></h1>
+    <h2>Directories</h2>
+    <ul class="browse">
+        <% for item in directories { %>
+            <div class="card">
+                <a href="<%= item.href %>">
+                    <%= item.name %>
+                </a>
+                <div class="byline">
+                    <% if !item.size_with_units.is_empty() { %>
+                        Size: <%= item.size_with_units %>;
+                    <% } %>
+                    Last Modified: <%= item.last_modified %>
+                </div>
+            </div>
+        <% } %>
+    </ul>
+    <h2>Files</h2>
+    <ul class="browse">
+        <% for item in files { %>
+            <div class="card">
+                <a href="<%= item.href %>">
+                    <%= item.name %>
+                </a>
+                <div class="byline">
+                    Size: <%= item.size_with_units %>;
+                    Last Modified: <%= item.last_modified %>
+                </div>
+            </div>
+        <% } %>
+    </ul>
+    <footer>
+        <p>Generated at <%= time %></p>
+    </footer>
+</body>
+</html>

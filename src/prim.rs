@@ -18,6 +18,26 @@ pub type Error = anyhow::Error;
 /// General result type
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Convenient ways to turn an [`Option`] into a [`Result`]
+pub trait OptionExt<T>: Sized {
+    /// If the option is [`None`], return an error with a static message
+    fn ok_or_err(self, msg: &'static str) -> Result<T>;
+
+    /// If the option is [`None`], return an error created by a
+    /// closure
+    fn ok_or_err_with<F: FnOnce() -> Error>(self, f: F) -> Result<T>;
+}
+
+impl<T> OptionExt<T> for Option<T> {
+    fn ok_or_err(self, msg: &'static str) -> Result<T> {
+        self.ok_or_else(|| anyhow!(msg))
+    }
+
+    fn ok_or_err_with<F: FnOnce() -> Error>(self, f: F) -> Result<T> {
+        self.ok_or_else(f)
+    }
+}
+
 /// UTC Time and Date
 ///
 /// # Comparing
