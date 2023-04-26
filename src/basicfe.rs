@@ -255,10 +255,13 @@ fn show_api_file_metadata(
 }
 
 /// The download server's base URL
+///
+/// (Used to be called `DownloadServerOrigin`, so you might see `dso`
+/// in the code.)
 #[derive(Debug, Clone)]
 struct DownloadBaseUrl(Arc<Url>);
 
-/// Extract [`DownloadServerOrigin`] from the request.
+/// Extract [`DownloadBaseUrl`] from the request.
 #[async_trait]
 impl FromRequestParts<()> for DownloadBaseUrl {
     type Rejection = BasicError;
@@ -277,7 +280,7 @@ impl FromRequestParts<()> for DownloadBaseUrl {
     }
 }
 
-/// Inject a [`DownloadServerOrigin`] into the request from the
+/// Inject a [`DownloadBaseUrl`] into the request from the
 /// given argument.
 async fn mw_inject_dso<B>(
     state_dso: State<DownloadBaseUrl>,
