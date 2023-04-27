@@ -117,10 +117,30 @@ impl StatusCodeExt for StatusCode {
     }
 }
 
+/// Page template for errors
+#[derive(TemplateOnce)]
+#[template(path = "statcode.html")]
+struct StatCodeTemplate {
+    code: u16,
+    canonical: &'static str,
+}
+
 /// Turn it into an Axum response
 impl IntoResponse for BasicError {
     fn into_response(self) -> Response {
-        (self.code, self.code.canonical_reason().unwrap_or_default())
+        (
+            self.code,
+            [("Content-Type", "text/html")],
+            StatCodeTemplate {
+                code: self.code.as_u16(),
+                canonical: self.code.canonical_reason().unwrap_or_default(),
+            }
+            .render_once()
+            .expect(
+                "Expect error to be rendered properly due to \
+static template",
+            ),
+        )
             .into_response()
     }
 }

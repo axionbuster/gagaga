@@ -457,10 +457,21 @@ async fn api_list(
     let now_sgnunixsec = DateTime::now().sgnunixsec();
 
     // Read the directory
-    let mut stream = list_directory(&*chroot, &*vpath)
-        .await
-        .context("list directory")
-        .map_err(ApiError::with_status(404))?;
+    let stream = list_directory(&*chroot, &*vpath).await;
+    // Check if it's due to insufficient permissions
+    if let Err(e) = stream {
+        if let Ok(e) = e.downcast::<std::io::Error>() {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                return Err(ApiError::with_status(403)(e));
+            } else {
+                return Err(ApiError::with_status(404)(e));
+            }
+        }
+        return Err(ApiError::with_status(404)(anyhow!(
+            "error building stream"
+        )));
+    }
+    let mut stream = stream.unwrap();
     while let Some(md) = stream.next().await {
         if md.is_err() {
             continue;
